@@ -1,0 +1,44 @@
+# Core MRI
+mri-nufft
+mrzerocore
+pypulseq
+pyMapVBVD
+ismrmrd
+
+# NUFFT backends
+cufinufft
+finufft
+
+# PyTorch (CUDA 12.1 wheels — compatible with CUDA 12.9 drivers)
+--index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
+torchkbnufft
+
+# CuPy
+cupy-cuda12x
+
+# Numerics / science
+numpy
+scipy
+matplotlib
+h5py
+nibabel
+scikit-image
+
+# Jupyter
+jupyter
+jupyterlab
+notebook
+ipykernel
+ipywidgets
+
+# Testing
+pytest
+coverage
+
+# Utilities
+tqdm
+requests
+pyyaml
