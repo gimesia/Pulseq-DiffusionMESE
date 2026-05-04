@@ -16,6 +16,7 @@ Funding acknowledgement (mandatory):
     IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
     December 2024-November 2028, Grant Agreement No. 101169519).
 """
+
 # %%
 import os
 import re
@@ -33,6 +34,7 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DEFAULT_SAVE_DIR = os.path.join(BASE_DIR, "seq_files")
 # Ensure the directory exists
 os.makedirs(DEFAULT_SAVE_DIR, exist_ok=True)
+
 
 class PulseqSeq(ABC):
     """
@@ -107,7 +109,19 @@ class PulseqSeq(ABC):
         """
         self._init_logging(logger, name, system_type, save_dir)
         self._init_system(system_type)
-        self._init_imaging_params(fov, Nx, Ny, slice_thickness, TR, N_slices, resolution, flip_angle, apodization, time_bw_product, v141_compat)
+        self._init_imaging_params(
+            fov,
+            Nx,
+            Ny,
+            slice_thickness,
+            TR,
+            N_slices,
+            resolution,
+            flip_angle,
+            apodization,
+            time_bw_product,
+            v141_compat,
+        )
         self._init_readout_timing(dwell_time)
         self._init_rf90(rf90_duration)
         self._init_spoilers(end_spoilers, spoiler_amplitude, spoiler_duration)
@@ -126,9 +140,14 @@ class PulseqSeq(ABC):
             save_dir: Output directory for ``.seq`` files.
         """
         if "_" in name:
-            raise ValueError("Sequence name should not contain underscores ('_'). They are reserved for filename formatting.")
+            raise ValueError(
+                "Sequence name should not contain underscores ('_'). They are reserved for filename formatting."
+            )
         self.logger = logger or logging.getLogger("PulseqSeq")
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
         self.name = name
         self.system_type = system_type
         self.save_dir = save_dir
@@ -143,7 +162,20 @@ class PulseqSeq(ABC):
         self.system = system_limit(system_type)
         self.seq = pp.Sequence(self.system)
 
-    def _init_imaging_params(self, fov, Nx, Ny, slice_thickness, TR, N_slices, resolution, flip_angle, apodization, time_bw_product, v141_compat):
+    def _init_imaging_params(
+        self,
+        fov,
+        Nx,
+        Ny,
+        slice_thickness,
+        TR,
+        N_slices,
+        resolution,
+        flip_angle,
+        apodization,
+        time_bw_product,
+        v141_compat,
+    ):
         """Store FOV, matrix size, TR, slice geometry, flip angle, and derived k-space quantities.
 
         When ``resolution`` is supplied, ``Nx`` and ``Ny`` are recalculated to yield isotropic
@@ -180,7 +212,9 @@ class PulseqSeq(ABC):
             self.Ny_requested = Ny
             self.Nx = int(np.round(fov / (resolution * 1e-3)))
             self.Ny = int(np.round(fov / (resolution * 1e-3)))
-            self.logger.info(f"Requested Nx: {self.Nx_requested}, Ny: {self.Ny_requested}")
+            self.logger.info(
+                f"Requested Nx: {self.Nx_requested}, Ny: {self.Ny_requested}"
+            )
             self.logger.info(f"Isotropic resolution: {resolution}mm")
             self.logger.info(f"Calculated Nx: {self.Nx}, Ny: {self.Ny}")
 
@@ -214,7 +248,9 @@ class PulseqSeq(ABC):
         else:
             self.dwell_time = None
             self.dwell_time = self.find_compatible_dwell_time()
-            self.logger.info(f"No given dwell_time, using minimum: {self.dwell_time*1e6:.3f}us")
+            self.logger.info(
+                f"No given dwell_time, using minimum: {self.dwell_time*1e6:.3f}us"
+            )
 
     def _init_rf90(self, rf90_duration):
         """Create the 90° sinc excitation pulse, its slice-selection gradient, and a trigger pulse.
@@ -261,9 +297,24 @@ class PulseqSeq(ABC):
         self.end_spoilers = end_spoilers
         # Align duration to the gradient raster (ceil ensures we never fall short)
         duration = align2rastertime_ceil(spoiler_duration, self.system.grad_raster_time)
-        self.spoiler_z = pp.make_trapezoid(channel="z", amplitude=spoiler_amplitude * self.system.max_grad, duration=duration, system=self.system)
-        self.spoiler_y = pp.make_trapezoid(channel="y", amplitude=spoiler_amplitude * self.system.max_grad, duration=duration, system=self.system)
-        self.spoiler_x = pp.make_trapezoid(channel="x", amplitude=spoiler_amplitude * self.system.max_grad, duration=duration, system=self.system)
+        self.spoiler_z = pp.make_trapezoid(
+            channel="z",
+            amplitude=spoiler_amplitude * self.system.max_grad,
+            duration=duration,
+            system=self.system,
+        )
+        self.spoiler_y = pp.make_trapezoid(
+            channel="y",
+            amplitude=spoiler_amplitude * self.system.max_grad,
+            duration=duration,
+            system=self.system,
+        )
+        self.spoiler_x = pp.make_trapezoid(
+            channel="x",
+            amplitude=spoiler_amplitude * self.system.max_grad,
+            duration=duration,
+            system=self.system,
+        )
 
     # -------------------------------------------------------------------------
     # Helper functions
@@ -281,19 +332,27 @@ class PulseqSeq(ABC):
             min_dwell = self.dwell_time
             self.logger.info(f"Input dwell time: {min_dwell*1e6:.3f}us")
         else:
-            min_dwell = self.system.adc_raster_time  # Minimum dwell time is adc raster time
+            min_dwell = (
+                self.system.adc_raster_time
+            )  # Minimum dwell time is adc raster time
             self.logger.info(f"Minimum dwell time: {min_dwell*1e6:.3f}us")
 
         # Round min_dwell to the nearest ADC raster tick to start the search
         dwell = align2rastertime_nearest(min_dwell, self.system.adc_raster_time)
-        self.logger.info(f"Starting dwell time aligned to ADC raster: {dwell*1e6:.3f}us")
+        self.logger.info(
+            f"Starting dwell time aligned to ADC raster: {dwell*1e6:.3f}us"
+        )
 
         # Increment by one ADC raster tick at a time — each step keeps ADC alignment while
         # narrowing the search for gradient-raster compatibility of the full readout window.
         # The modulo check has two branches because floating-point remainder near grad_raster_time
         # may round to grad_raster_time rather than 0; both represent exact alignment.
-        while not np.isclose((self.Nx * dwell) % self.system.grad_raster_time, 0, atol=1e-12) and not np.isclose(
-            (self.Nx * dwell) % self.system.grad_raster_time, self.system.grad_raster_time, atol=1e-12
+        while not np.isclose(
+            (self.Nx * dwell) % self.system.grad_raster_time, 0, atol=1e-12
+        ) and not np.isclose(
+            (self.Nx * dwell) % self.system.grad_raster_time,
+            self.system.grad_raster_time,
+            atol=1e-12,
         ):
             dwell += self.system.adc_raster_time
         self.logger.info(f"Found compatible dwell time: {dwell*1e6:.3f}us")
@@ -391,7 +450,11 @@ class PulseqSeq(ABC):
             plot_now: Display plot immediately (default=True).
         """
         if self.TR:
-            time_range = (0, self.TR * TRs if TRs > 0 else np.inf) if time_range is None else time_range
+            time_range = (
+                (0, self.TR * TRs if TRs > 0 else np.inf)
+                if time_range is None
+                else time_range
+            )
 
         self.seq.plot(
             time_range=time_range,
@@ -411,7 +474,9 @@ class PulseqSeq(ABC):
         """
         self.logger.warning("build_seq() not implemented in base PulseqSeq class.")
 
-    def validate_sequence_properties(self, expected_values: dict = None, tolerance: float = None) -> tuple[bool, list[str]]:
+    def validate_sequence_properties(
+        self, expected_values: dict = None, tolerance: float = None
+    ) -> tuple[bool, list[str]]:
         """
         Validate that object properties match expected values from the sequence report.
 
@@ -468,7 +533,9 @@ class PulseqSeq(ABC):
             flip_angles = [float(x) for x in flip_match.group(1).strip().split()]
             parsed_values["flip_angle"] = flip_angles
 
-        kspace_match = re.search(r"Unique k-space positions.*?:\s+(\d+)\s+(\d+)", report_str)
+        kspace_match = re.search(
+            r"Unique k-space positions.*?:\s+(\d+)\s+(\d+)", report_str
+        )
         if kspace_match:
             parsed_values["Nx"] = int(kspace_match.group(1))
             parsed_values["Ny"] = int(kspace_match.group(2))
@@ -499,25 +566,53 @@ class PulseqSeq(ABC):
 
         # --- hardware limits ---
         # Per-axis peak gradient (x, y, z) in Hz/m and mT/m
-        max_grad_match = re.search(r"Max gradient:\s+([\d]+)\s+([\d]+)\s+([\d]+)\s+Hz/m\s+==\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+mT/m", report_str)
+        max_grad_match = re.search(
+            r"Max gradient:\s+([\d]+)\s+([\d]+)\s+([\d]+)\s+Hz/m\s+==\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+mT/m",
+            report_str,
+        )
         if max_grad_match:
-            parsed_values["max_gradient_hz"] = [int(max_grad_match.group(1)), int(max_grad_match.group(2)), int(max_grad_match.group(3))]
-            parsed_values["max_gradient_mt"] = [float(max_grad_match.group(4)), float(max_grad_match.group(5)), float(max_grad_match.group(6))]
+            parsed_values["max_gradient_hz"] = [
+                int(max_grad_match.group(1)),
+                int(max_grad_match.group(2)),
+                int(max_grad_match.group(3)),
+            ]
+            parsed_values["max_gradient_mt"] = [
+                float(max_grad_match.group(4)),
+                float(max_grad_match.group(5)),
+                float(max_grad_match.group(6)),
+            ]
 
         # Per-axis peak slew rate (x, y, z) in Hz/m/s and T/m/s
-        max_slew_match = re.search(r"Max slew rate:\s+([\d]+)\s+([\d]+)\s+([\d]+)\s+Hz/m/s\s+==\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+T/m/s", report_str)
+        max_slew_match = re.search(
+            r"Max slew rate:\s+([\d]+)\s+([\d]+)\s+([\d]+)\s+Hz/m/s\s+==\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+T/m/s",
+            report_str,
+        )
         if max_slew_match:
-            parsed_values["max_slew_hz"] = [int(max_slew_match.group(1)), int(max_slew_match.group(2)), int(max_slew_match.group(3))]
-            parsed_values["max_slew_t"] = [float(max_slew_match.group(4)), float(max_slew_match.group(5)), float(max_slew_match.group(6))]
+            parsed_values["max_slew_hz"] = [
+                int(max_slew_match.group(1)),
+                int(max_slew_match.group(2)),
+                int(max_slew_match.group(3)),
+            ]
+            parsed_values["max_slew_t"] = [
+                float(max_slew_match.group(4)),
+                float(max_slew_match.group(5)),
+                float(max_slew_match.group(6)),
+            ]
 
         # Vector-magnitude peak gradient across all axes
-        max_abs_grad_match = re.search(r"Max absolute gradient:\s+([\d]+)\s+Hz/m\s+==\s+([\d.]+)\s+mT/m", report_str)
+        max_abs_grad_match = re.search(
+            r"Max absolute gradient:\s+([\d]+)\s+Hz/m\s+==\s+([\d.]+)\s+mT/m",
+            report_str,
+        )
         if max_abs_grad_match:
             parsed_values["max_abs_gradient_hz"] = int(max_abs_grad_match.group(1))
             parsed_values["max_abs_gradient_mt"] = float(max_abs_grad_match.group(2))
 
         # Vector-magnitude peak slew rate across all axes
-        max_abs_slew_match = re.search(r"Max absolute slew rate:\s+([\d.e+]+)\s+Hz/m/s\s+==\s+([\d.]+)\s+T/m/s", report_str)
+        max_abs_slew_match = re.search(
+            r"Max absolute slew rate:\s+([\d.e+]+)\s+Hz/m/s\s+==\s+([\d.]+)\s+T/m/s",
+            report_str,
+        )
         if max_abs_slew_match:
             parsed_values["max_abs_slew_hz"] = float(max_abs_slew_match.group(1))
             parsed_values["max_abs_slew_t"] = float(max_abs_slew_match.group(2))
@@ -534,8 +629,11 @@ class PulseqSeq(ABC):
             expected_values = {
                 "TE": self.TE,  # seconds
                 "TR": self.TR,  # seconds
-                "max_abs_slew_t": self.system.max_slew / self.system.gamma,  # Convert from mT/m/s to T/m/s
-                "max_abs_gradient_mt": self.system.max_grad / self.system.gamma * 1e3,  # Convert from T/m to mT/m
+                "max_abs_slew_t": self.system.max_slew
+                / self.system.gamma,  # Convert from mT/m/s to T/m/s
+                "max_abs_gradient_mt": self.system.max_grad
+                / self.system.gamma
+                * 1e3,  # Convert from T/m to mT/m
             }
 
         # Validate against expected values
@@ -559,7 +657,9 @@ class PulseqSeq(ABC):
             if key == "max_abs_slew_t":
                 ratio = actual / expected
                 if actual <= expected:
-                    validation_results.append(f"✓ {key}: {actual} <= {expected} (within limits)")
+                    validation_results.append(
+                        f"✓ {key}: {actual} <= {expected} (within limits)"
+                    )
                 elif 1.0 < ratio <= 1.75:
                     msg = f"⚠ {key}: {actual} is {ratio*100:.1f}% of limit {expected} (warning, but passing)"
                     validation_results.append(msg)
@@ -574,7 +674,9 @@ class PulseqSeq(ABC):
             elif key == "max_abs_gradient_mt":
                 ratio = actual / expected
                 if actual <= expected:
-                    validation_results.append(f"✓ {key}: {actual} <= {expected} (within limits)")
+                    validation_results.append(
+                        f"✓ {key}: {actual} <= {expected} (within limits)"
+                    )
                 elif 1.0 < ratio <= 1.75:
                     msg = f"⚠ {key}: {actual} is {ratio*100:.1f}% of limit {expected} (warning, but passing)"
                     validation_results.append(msg)
@@ -599,9 +701,13 @@ class PulseqSeq(ABC):
                 if abs(actual - expected) <= tolerance:
                     # Display time values in ms
                     if key in ["TE", "TR", "sequence_duration"]:
-                        validation_results.append(f"✓ {key}: {actual*1e3:.3f}ms ≈ {expected*1e3:.3f}ms (within tolerance)")
+                        validation_results.append(
+                            f"✓ {key}: {actual*1e3:.3f}ms ≈ {expected*1e3:.3f}ms (within tolerance)"
+                        )
                     else:
-                        validation_results.append(f"✓ {key}: {actual} ≈ {expected} (within tolerance)")
+                        validation_results.append(
+                            f"✓ {key}: {actual} ≈ {expected} (within tolerance)"
+                        )
                 else:
                     if key in ["TE", "TR", "sequence_duration"]:
                         msg = f"❌ {key}: {actual*1e3:.3f}ms != {expected*1e3:.3f}ms (diff: {abs(actual - expected)*1e3:.3f}ms)"
@@ -613,7 +719,10 @@ class PulseqSeq(ABC):
 
             elif isinstance(expected, list):
                 if isinstance(actual, list) and len(actual) == len(expected):
-                    list_match = all(abs(a - e) <= tolerance if isinstance(e, float) else a == e for a, e in zip(actual, expected))
+                    list_match = all(
+                        abs(a - e) <= tolerance if isinstance(e, float) else a == e
+                        for a, e in zip(actual, expected)
+                    )
                     if list_match:
                         validation_results.append(f"✓ {key}: {actual} ≈ {expected}")
                     else:

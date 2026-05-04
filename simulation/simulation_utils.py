@@ -13,10 +13,10 @@ def add_tumor_to_phantom(
 ) -> Any:
     """
     Adds a tumor structure to the phantom's data (phantom.D) with specified size and location.
-    
+
     Typical brain tumor ADC values are around ~1.5 * 10^-3 mm^2/s,
     which lies between GM/WM and CSF (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3000221)
-    
+
     The tumor is characterized by an interior ADC (adc_tumor_core) and a 1-voxel border
     (adc_tumor_border). The function modifies the phantom.D tensor in-place.
 
@@ -71,14 +71,18 @@ def add_tumor_to_phantom(
             center_x = (half_nx + nx) // 2
             center_y = (half_ny + ny) // 2
         else:
-            raise ValueError(f"Invalid tumor_location string '{tumor_location}'. Must be 'tl', 'bl', 'tr', or 'br'.")
+            raise ValueError(
+                f"Invalid tumor_location string '{tumor_location}'. Must be 'tl', 'bl', 'tr', or 'br'."
+            )
 
         cx, cy, cz = (center_x, center_y, center_z)
 
     elif isinstance(tumor_location, tuple) and len(tumor_location) == 3:
         cx, cy, cz = tumor_location
     else:
-        raise ValueError("tumor_location must be a tuple (cx, cy, cz) or one of 'tl', 'bl', 'tr', 'br'.")
+        raise ValueError(
+            "tumor_location must be a tuple (cx, cy, cz) or one of 'tl', 'bl', 'tr', 'br'."
+        )
 
     # 3. Compute integer start/end indices and clamp to phantom bounds
 
@@ -135,7 +139,6 @@ def add_tumor_to_phantom(
     return phantom
 
 
-
 def epi_ghost_correction(
     calib_signal,
     epi_signal,
@@ -168,7 +171,7 @@ def epi_ghost_correction(
         epi_signal = epi_signal.numpy()
 
     calib_signal = np.asarray(calib_signal, dtype=np.complex64)
-    epi_signal   = np.asarray(epi_signal,   dtype=np.complex64)
+    epi_signal = np.asarray(epi_signal, dtype=np.complex64)
     N = calib_signal.shape[-1]
     x = np.arange(N, dtype=float)
 
@@ -183,17 +186,19 @@ def epi_ghost_correction(
         return kx[::-1].copy() if is_odd else kx
 
     # --- Phase estimation from navigator ---
-    even_imgs = np.array([_kspace_to_img(calib_signal[i], False)
-                          for i in range(0, len(calib_signal), 2)])
-    odd_imgs  = np.array([_kspace_to_img(calib_signal[i], True)
-                          for i in range(1, len(calib_signal), 2)])
+    even_imgs = np.array(
+        [_kspace_to_img(calib_signal[i], False) for i in range(0, len(calib_signal), 2)]
+    )
+    odd_imgs = np.array(
+        [_kspace_to_img(calib_signal[i], True) for i in range(1, len(calib_signal), 2)]
+    )
 
-    even_avg = np.mean(even_imgs, axis=0)   # (N,) complex
-    odd_avg  = np.mean(odd_imgs,  axis=0)
+    even_avg = np.mean(even_imgs, axis=0)  # (N,) complex
+    odd_avg = np.mean(odd_imgs, axis=0)
 
     delta_phi = np.unwrap(np.angle(even_avg * np.conj(odd_avg)))  # (N,) real
     a, b = np.polyfit(x, delta_phi, 1)
-    phi_fit = (a * x + b).astype(np.float32)   # (N,) linear ghost phase
+    phi_fit = (a * x + b).astype(np.float32)  # (N,) linear ghost phase
 
     # --- Apply correction to EPI lines ---
     corrected = np.empty_like(epi_signal)
@@ -227,4 +232,3 @@ def fft_reconstruct_image(kspace, use_gpu=False):
 
     magnitude = torch.abs(image)
     return magnitude.cpu().numpy(), image.cpu().numpy()
-

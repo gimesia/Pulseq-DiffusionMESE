@@ -3,6 +3,7 @@
 This script simulates the magnetisation evolution through the (ME)-SE echo train
 and plots the resulting echo amplitudes as a function of echo number.
 """
+
 # %%
 import os
 import ast
@@ -38,7 +39,7 @@ use_GPU = torch.cuda.is_available()
 # %% ==============================================================================
 #   Phantom parameters
 # =================================================================================
-PHANTOM_IDX =  4  # Select phantom index
+PHANTOM_IDX = 4  # Select phantom index
 
 NZ = 10
 SLICE_IDX = 4  # Select slice index
@@ -61,16 +62,22 @@ if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
     print(f"Loaded phantom {os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}")
     phantom = phantom.interpolate(NX, NY, NZ)  # Resize phantom, select slice
     print(f"Resized phantom. Shape: {phantom.D.shape}")
-    
-    phantom.voxel_size = torch.Tensor([0.00233, 0.00233, 0.00233])  # Set voxel size (in mm)
-    
+
+    phantom.voxel_size = torch.Tensor(
+        [0.00233, 0.00233, 0.00233]
+    )  # Set voxel size (in mm)
+
     vox = phantom.voxel_size
 
     if add_tumor:
         # typical brain tumor ADC values are around ~1.5 * 10^-3 mm^2/s,
         # which lies between GM/WM and CSF (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3000221)
         phantom = add_tumor_to_phantom(
-            phantom, tumor_size=tumor_size, tumor_location="br", adc_tumor_core=1.5, adc_tumor_border=2.5  # 'tl', 'bl', 'tr', 'br' or (cx, cy, cz)
+            phantom,
+            tumor_size=tumor_size,
+            tumor_location="br",
+            adc_tumor_core=1.5,
+            adc_tumor_border=2.5,  # 'tl', 'bl', 'tr', 'br' or (cx, cy, cz)
         )
 
     phantom = phantom.slices([SLICE_IDX])  # Resize phantom, select slice
@@ -96,12 +103,13 @@ phantom_data = phantom.build()  # Build phantom with specified voxel size (in mm
 SEQUENCE_IDX = 1  # Select sequence index
 
 seq_files = [f for f in os.listdir(SEQUENCES_DIR_PATH) if f.endswith(".seq")]
-sequences = [f for f in os.listdir(SEQUENCES_DIR_PATH) if f.endswith(".seq") and 'v14' in f]  # Filter for sequences containing 'v14' in the filename
+sequences = [
+    f for f in os.listdir(SEQUENCES_DIR_PATH) if f.endswith(".seq") and "v14" in f
+]  # Filter for sequences containing 'v14' in the filename
 if MULTI_ECHO:
     sequences = [f for f in sequences if "DiffSE" not in f]
 else:
     sequences = [f for f in sequences if "DiffMESE" not in f]
-
 
 
 print("Available sequences:", sequences)
@@ -112,20 +120,22 @@ sequence_path = os.path.join(SEQUENCES_DIR_PATH, sequences[SEQUENCE_IDX])
 seq0 = mr0.Sequence.import_file(sequence_path)
 seq = Sequence()
 seq.read(sequence_path)
-print(f"Loaded sequence {os.path.split(sequence_path)[-1]}")  # with {len(seq0.blocks)} blocks.")
+print(
+    f"Loaded sequence {os.path.split(sequence_path)[-1]}"
+)  # with {len(seq0.blocks)} blocks.")
 
 
-TR = seq.definitions.get('TR')
-AdcNumSamples = int(seq.definitions.get('AdcNumSamples'))
-N_navigator_lines = int(seq.definitions.get('NNavigatorLines'))
-PFF = seq.definitions.get('PartialFourierFactor')
-BVAL = seq.definitions.get('bValue')
+TR = seq.definitions.get("TR")
+AdcNumSamples = int(seq.definitions.get("AdcNumSamples"))
+N_navigator_lines = int(seq.definitions.get("NNavigatorLines"))
+PFF = seq.definitions.get("PartialFourierFactor")
+BVAL = seq.definitions.get("bValue")
 
 NY_acq = int(NY * PFF)
-fov = float(seq.definitions.get('FOV')[0])   # in-plane FOV in metres
+fov = float(seq.definitions.get("FOV")[0])  # in-plane FOV in metres
 
 
-N_directions_raw = seq.definitions.get('DiffusionDirections')
+N_directions_raw = seq.definitions.get("DiffusionDirections")
 if isinstance(N_directions_raw, str):
     # Example input: "[0, 0, 0] [1, 0, 0] [0, 0, 0] [0, 1, 0] [0, 0, 0] [0, 0, 1]"
     groups = re.findall(r"\[[^\[\]]*\]", N_directions_raw)
@@ -143,19 +153,23 @@ else:
 # =================================================================================
 if use_GPU:
     seq0_gpu = seq0.cuda()
-    phantom_data_gpu = phantom_data.cuda()  # Use only one slice for GPU computation to save memory
+    phantom_data_gpu = (
+        phantom_data.cuda()
+    )  # Use only one slice for GPU computation to save memory
     # print(f"Using GPU for computation. Shape: {phantom_data_gpu.shape}")
     graph = mr0.compute_graph(seq0_gpu, phantom_data_gpu, 20000, 1e-5)
-    signal = mr0.execute_graph(graph, seq0_gpu, phantom_data_gpu, print_progress=True).cpu()
-    
+    signal = mr0.execute_graph(
+        graph, seq0_gpu, phantom_data_gpu, print_progress=True
+    ).cpu()
 
     del seq0_gpu
     del phantom_data_gpu
     torch.cuda.empty_cache()
 else:
-    phantom_data_cpu = phantom_data.cpu()  # Use only one slice for GPU computation to save memory
+    phantom_data_cpu = (
+        phantom_data.cpu()
+    )  # Use only one slice for GPU computation to save memory
     # print(f"Using CPU for computation. Shape: {phantom_data_cpu.shape}")
-    
 
     ## =======================================================================================================================
     graph = mr0.compute_graph(seq0, phantom_data_cpu, 2000, 1e-4)
@@ -174,7 +188,10 @@ print(f"Signal dtype: {signal.dtype}")
 
 TR_idx = 1
 
-seq.plot(plot_now=False, time_range=(TR * TR_idx, (TR * TR_idx) + 0.25),)
+seq.plot(
+    plot_now=False,
+    time_range=(TR * TR_idx, (TR * TR_idx) + 0.25),
+)
 mr0.util.insert_signal_plot(seq=seq, signal=signal.numpy())
 plt.show()
 
@@ -184,29 +201,31 @@ plt.show()
 if not MULTI_ECHO:
     samples_per_cal = int(N_navigator_lines * AdcNumSamples)
     samples_per_dir = int(NY_acq * AdcNumSamples)
-    
+
     calib_signal = signal[:samples_per_cal,].reshape((N_navigator_lines, AdcNumSamples))
     epi_signal = signal[samples_per_cal:,].squeeze()
     dir_signal = []
     for i in range(N_directions):
         start_idx = i * samples_per_dir
         end_idx = (i + 1) * samples_per_dir
-        dir_signal.append(epi_signal[start_idx:end_idx,].reshape((NY_acq, AdcNumSamples)))
+        dir_signal.append(
+            epi_signal[start_idx:end_idx,].reshape((NY_acq, AdcNumSamples))
+        )
     dir_signal = np.array(dir_signal)
-    
+
     print(f"Calibration signal shape: {calib_signal.shape}")
     print(f"EPI signal shape: {epi_signal.shape}")
     print(f"Directional signal shapes: {[e.shape for e in dir_signal]}")
 
 
-
 # %% ==============================================================================
 # Ghost correction using calibration lines
 # =================================================================================
-calib_np = calib_signal.numpy() if hasattr(calib_signal, "numpy") else np.asarray(calib_signal)
+calib_np = (
+    calib_signal.numpy() if hasattr(calib_signal, "numpy") else np.asarray(calib_signal)
+)
 for i in range(N_directions):
     dir_signal[i] = epi_ghost_correction(calib_np, dir_signal[i])
-
 
 
 # %% ==============================================================================
@@ -215,9 +234,9 @@ for i in range(N_directions):
 for i in range(N_directions):
     mag, image = fft_reconstruct_image(dir_signal[i], use_gpu=use_GPU)
     plt.figure()
-    plt.imshow(np.abs(image), cmap='gray')
+    plt.imshow(np.abs(image), cmap="gray")
     plt.title(f"Reconstructed image for direction {i+1}")
-    plt.axis('off')
+    plt.axis("off")
 
 
 # %% =============================================================================
@@ -233,8 +252,10 @@ ky = k_traj_adc[1]
 # PyPulseq returns k in cycles/m; ramp samples may slightly exceed ±0.5 (expected)
 kx_norm = kx * fov / NX
 ky_norm = ky * fov / NY
-print(f"[k-traj] kx range: [{kx_norm.min():.4f}, {kx_norm.max():.4f}] "
-      f"(expected Nyquist ≈ ±0.5, ramp overshoot OK)")
+print(
+    f"[k-traj] kx range: [{kx_norm.min():.4f}, {kx_norm.max():.4f}] "
+    f"(expected Nyquist ≈ ±0.5, ramp overshoot OK)"
+)
 
 traj = np.stack([kx_norm, ky_norm], axis=-1)  # shape: (n_samples, 2)
 
@@ -255,11 +276,12 @@ print(f"Directional trajectory shapes: {[t.shape for t in direction_trajectories
 # different k-space offset. All EPI readouts share the same gradient waveform, so
 # subtract the per-TR DC offset to align all trajectories to a common origin.
 traj_ref = direction_trajectories[0]
-aligned_trajectories = np.array([
-    t - t[0] + traj_ref[0] for t in direction_trajectories
-])
+aligned_trajectories = np.array(
+    [t - t[0] + traj_ref[0] for t in direction_trajectories]
+)
 
 from mrinufft import get_operator
+
 img_size = (NY, NX)  # your Cartesian reconstruction grid size
 
 # Build one NUFFT operator shared across all directions (same EPI k-space trajectory)
@@ -276,8 +298,10 @@ for i in range(N_directions):
     sig = torch.from_numpy(sig).to(torch.complex64)  # Convert to PyTorch tensor
     print(f"Signal shape for direction {i+1}: {sig.shape}, dtype: {sig.dtype}")
     img_complex = nufft_op.adj_op(sig.flatten())  # shape: (1, Ny, Nx) if n_coils=1
-    img_complex = img_complex.squeeze()    # (Ny, Nx)
-    print(f"Reconstructed image shape for direction {i+1}: {img_complex.shape}, dtype: {img_complex.dtype}")
+    img_complex = img_complex.squeeze()  # (Ny, Nx)
+    print(
+        f"Reconstructed image shape for direction {i+1}: {img_complex.shape}, dtype: {img_complex.dtype}"
+    )
 
     fig, ax = plt.subplots(1, 2, figsize=(10, 4))
 

@@ -13,18 +13,23 @@ import pypulseq as pp
 
 deg2rad = lambda deg: deg * np.pi / 180
 align2rastertime_ceil = lambda x, rt: np.ceil(x / rt) * rt  # align time to raster time
-align2rastertime_floor = lambda x, rt: np.floor(x / rt) * rt  # align time to raster time
-align2rastertime_nearest = lambda x, rt: np.round(x / rt) * rt  # align time to raster time
+align2rastertime_floor = (
+    lambda x, rt: np.floor(x / rt) * rt
+)  # align time to raster time
+align2rastertime_nearest = (
+    lambda x, rt: np.round(x / rt) * rt
+)  # align time to raster time
 milli = lambda x: x / 1000
 micro = lambda x: x / 1000000
 nano = lambda x: x / 1000000000
+
 
 def tensor2image(tensor: torch.Tensor) -> np.ndarray:
     return tensor.cpu().numpy()
 
 
 def image2tensor(image: np.ndarray) -> torch.Tensor:
-        return torch.from_numpy(image)
+    return torch.from_numpy(image)
 
 
 def normalize2float64(image: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
@@ -57,9 +62,13 @@ class SystemLimitType(str, Enum):
 
 
 def system_limit(
-    type: SystemLimitType, rf_ringdown_time=micro(10), rf_dead_time=micro(100), adc_dead_time=micro(10), adc_raster_time=micro(1)
+    type: SystemLimitType,
+    rf_ringdown_time=micro(10),
+    rf_dead_time=micro(100),
+    adc_dead_time=micro(10),
+    adc_raster_time=micro(1),
 ) -> pp.Opts:
-    # NOTE:`    
+    # NOTE:`
     #   ADC raster time is a multiple of:
     #       GE's 2 µs raster (the coarsest constraint)
     #       Siemens' 100 ns raster
@@ -147,6 +156,7 @@ def visualize_kspace_trajectory(seq: pp.Sequence):
 
     plt.show()
 
+
 def fft_reconstruct_image(kspace, use_gpu=True, variant="v1"):
     """Reconstruct an image from k-space via inverse FFT.
 
@@ -227,6 +237,7 @@ def visualize_kspace(
     plt.show()
     return normalized
 
+
 # ===============================================================================
 #   Diffusion
 # ===============================================================================
@@ -250,9 +261,14 @@ def calc_bval(G, delta, Delta, gdiff_rt):
            b-value in s/mm2
     """
 
-    bval = (2 * math.pi * G) ** 2 * ((Delta - delta / 3) * (delta**2) + (gdiff_rt**3) / 30 - delta * (gdiff_rt**2) / 6)
+    bval = (2 * math.pi * G) ** 2 * (
+        (Delta - delta / 3) * (delta**2)
+        + (gdiff_rt**3) / 30
+        - delta * (gdiff_rt**2) / 6
+    )
 
     return bval
+
 
 def bFactCalc(g, delta, DELTA):
     """
@@ -281,7 +297,9 @@ def bFactCalc(g, delta, DELTA):
     """
     sigma = 1.0
     kappa_minus_lambda = (1.0 / 3.0) - 0.5  # = -1/6
-    return (2 * np.pi * g * delta * sigma) ** 2 * (DELTA + 2 * kappa_minus_lambda * delta)
+    return (2 * np.pi * g * delta * sigma) ** 2 * (
+        DELTA + 2 * kappa_minus_lambda * delta
+    )
 
 
 def calc_diffusion_gradient_amplitude(b_value, delta, DELTA):
@@ -308,8 +326,9 @@ def calc_diffusion_gradient_amplitude(b_value, delta, DELTA):
     return g
 
 
-
-def calc_area_preserving_trapezoid(G_req, small_delta, max_grad, max_slew, grad_raster_time):
+def calc_area_preserving_trapezoid(
+    G_req, small_delta, max_grad, max_slew, grad_raster_time
+):
     """
     For a user-specified small_delta that produces G_req > max_grad, compute the
     best trapezoid achievable at max_grad within that fixed duration.
@@ -351,7 +370,10 @@ def calc_area_preserving_trapezoid(G_req, small_delta, max_grad, max_slew, grad_
     rise_time_new = np.ceil(max_grad / max_slew / grad_raster_time) * grad_raster_time
 
     # Maximise flat_time within the fixed small_delta window
-    flat_time_new = np.floor((small_delta - 2 * rise_time_new) / grad_raster_time) * grad_raster_time
+    flat_time_new = (
+        np.floor((small_delta - 2 * rise_time_new) / grad_raster_time)
+        * grad_raster_time
+    )
 
     if flat_time_new < 0:
         return None  # max_grad ramps alone don't fit inside small_delta
@@ -545,7 +567,9 @@ def get_diffusion_directions(n_directions, insert_b0s_at=0):
     elif n_directions == 1:
         g = np.array([[1, 0, 0]])
     else:
-        print(f"Number of directions {n_directions} not implemented. Using 3 orthogonal directions instead.")
+        print(
+            f"Number of directions {n_directions} not implemented. Using 3 orthogonal directions instead."
+        )
         g = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
     if insert_b0s_at:
@@ -556,4 +580,3 @@ def get_diffusion_directions(n_directions, insert_b0s_at=0):
         g = np.insert(g, positions, np.array([0, 0, 0]), axis=0)
 
     return g
-

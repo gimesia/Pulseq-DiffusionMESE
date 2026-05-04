@@ -9,6 +9,7 @@ from pulseq_diffusion_mese.sequence import SequenceParams, _diffusion_gradient_a
 # Version
 # ---------------------------------------------------------------------------
 
+
 def test_version_is_string():
     assert isinstance(__version__, str)
     assert len(__version__) > 0
@@ -17,6 +18,7 @@ def test_version_is_string():
 # ---------------------------------------------------------------------------
 # SequenceParams defaults
 # ---------------------------------------------------------------------------
+
 
 class TestSequenceParams:
     def test_default_n_echoes(self):
@@ -41,6 +43,7 @@ class TestSequenceParams:
 # ---------------------------------------------------------------------------
 # build_sequence (without pypulseq installed returns SequenceParams)
 # ---------------------------------------------------------------------------
+
 
 class TestBuildSequence:
     """These tests are designed to run with or without pypulseq installed."""
@@ -83,13 +86,17 @@ class TestBuildSequence:
 # Diffusion gradient amplitude helper
 # ---------------------------------------------------------------------------
 
+
 class TestDiffusionGradientAmplitude:
     """Unit tests for the Stejskal–Tanner amplitude calculation."""
 
     def _make_gx_stub(self):
         """Minimal stub for the gx gradient object."""
         from types import SimpleNamespace
-        return SimpleNamespace(area=1.0, flat_time=6.4e-3, rise_time=1e-4, duration=7e-3)
+
+        return SimpleNamespace(
+            area=1.0, flat_time=6.4e-3, rise_time=1e-4, duration=7e-3
+        )
 
     def test_b0_gives_zero_amplitude(self):
         params = SequenceParams(b_value=0)

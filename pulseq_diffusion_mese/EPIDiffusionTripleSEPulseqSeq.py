@@ -28,6 +28,7 @@ Funding acknowledgement (mandatory):
     IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
     December 2024-November 2028, Grant Agreement No. 101169519).
 """
+
 # %%
 from pathlib import Path
 import sys
@@ -40,6 +41,7 @@ import pypulseq as pp
 
 from PulseqSeq import *
 from EPIReadout import EPIReadout
+
 
 class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
     """Diffusion-weighted triple spin-echo EPI sequence.
@@ -200,7 +202,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         self.simultan_rephasers = simultan_rephasers
 
         # Base polarity pattern: alternate [down, up, down] for B0 correction, or all-down otherwise
-        self.blip_down = [True, False, True] if alternating_blip_polarity else [True, True, True]
+        self.blip_down = (
+            [True, False, True] if alternating_blip_polarity else [True, True, True]
+        )
         # XOR with (not blip_down): when blip_down=False the entire pattern is inverted
         self.blip_down = np.logical_xor(self.blip_down, not blip_down).tolist()
 
@@ -214,15 +218,34 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         self.phase_cycling = phase_cycling
 
         # --- PulseqSeq base init ---
-        self._init_logging(logger or logging.getLogger("EPIDiffusionTripleSEPulseqSeq"), name, system_type, save_dir)
+        self._init_logging(
+            logger or logging.getLogger("EPIDiffusionTripleSEPulseqSeq"),
+            name,
+            system_type,
+            save_dir,
+        )
         self._init_system(system_type)
-        self._init_imaging_params(fov, Nx, Ny, slice_thickness, TR, N_slices, resolution, flip_angle, apodization, time_bw_product, v141_compat)
+        self._init_imaging_params(
+            fov,
+            Nx,
+            Ny,
+            slice_thickness,
+            TR,
+            N_slices,
+            resolution,
+            flip_angle,
+            apodization,
+            time_bw_product,
+            v141_compat,
+        )
         self._init_readout_timing(dwell_time)
         self._init_rf90(rf90_duration)
         self._init_spoilers(end_spoilers, spoiler_amplitude, spoiler_duration)
 
         # --- Diffusion parameters (from DiffusionSEPulseqSeq._init_diffusion_params) ---
-        self._init_diffusion_params(b_value, b_directions, b_0_frequency, small_delta, big_DELTA, rf180_spoiler)
+        self._init_diffusion_params(
+            b_value, b_directions, b_0_frequency, small_delta, big_DELTA, rf180_spoiler
+        )
 
         # --- Spin-echo RF180 (from SEPulseqSeq._init_se) ---
         self._init_se(TE, rf180_duration)
@@ -230,7 +253,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         # --- EPI fit loop + timing ---
         self._run_epi_fit_loop()
         self._calc_epi_tr_delay()
-        self.diffusion_gradient_amplitudes = [self.diffusion_gradient_amplitude] * self.b_directions
+        self.diffusion_gradient_amplitudes = [
+            self.diffusion_gradient_amplitude
+        ] * self.b_directions
         self.build_seq()
 
     # =========================================================================
@@ -273,8 +298,12 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         )
 
         # ── 2. Trapezoid at max_grad in minimum time ─────────────────────────────
-        amplitude = spoiler_amplitude * self.system.max_grad  # of max_grad to allow for some tolerance while still achieving strong spoiling
-        rise_time = amplitude / self.system.max_slew  # minimum rise time for this amplitude
+        amplitude = (
+            spoiler_amplitude * self.system.max_grad
+        )  # of max_grad to allow for some tolerance while still achieving strong spoiling
+        rise_time = (
+            amplitude / self.system.max_slew
+        )  # minimum rise time for this amplitude
         max_spoiler_dummy = pp.make_trapezoid(
             channel="z",
             amplitude=amplitude,
@@ -289,21 +318,68 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             f"\n\tTriangular area={max_spoiler_dummy.area:.1f} Hz/m·s"
         )
 
-        self.spoiler_areas = np.linspace(min_spoiler_dummy.area, max_spoiler_dummy.area, num=3)
+        self.spoiler_areas = np.linspace(
+            min_spoiler_dummy.area, max_spoiler_dummy.area, num=3
+        )
 
         duration = align2rastertime_ceil(spoiler_duration, self.system.grad_raster_time)
 
-        self.spoiler_z = pp.make_trapezoid(channel="z", area=self.spoiler_areas[0], duration=duration, system=self.system)
-        self.spoiler_y = pp.make_trapezoid(channel="y", area=self.spoiler_areas[0], duration=duration, system=self.system)
-        self.spoiler_x = pp.make_trapezoid(channel="x", area=self.spoiler_areas[0], duration=duration, system=self.system)
+        self.spoiler_z = pp.make_trapezoid(
+            channel="z",
+            area=self.spoiler_areas[0],
+            duration=duration,
+            system=self.system,
+        )
+        self.spoiler_y = pp.make_trapezoid(
+            channel="y",
+            area=self.spoiler_areas[0],
+            duration=duration,
+            system=self.system,
+        )
+        self.spoiler_x = pp.make_trapezoid(
+            channel="x",
+            area=self.spoiler_areas[0],
+            duration=duration,
+            system=self.system,
+        )
 
-        self.spoiler_z2 = pp.make_trapezoid(channel="z", area=self.spoiler_areas[1], duration=duration, system=self.system)
-        self.spoiler_y2 = pp.make_trapezoid(channel="y", area=self.spoiler_areas[1], duration=duration, system=self.system)
-        self.spoiler_x2 = pp.make_trapezoid(channel="x", area=self.spoiler_areas[1], duration=duration, system=self.system)
+        self.spoiler_z2 = pp.make_trapezoid(
+            channel="z",
+            area=self.spoiler_areas[1],
+            duration=duration,
+            system=self.system,
+        )
+        self.spoiler_y2 = pp.make_trapezoid(
+            channel="y",
+            area=self.spoiler_areas[1],
+            duration=duration,
+            system=self.system,
+        )
+        self.spoiler_x2 = pp.make_trapezoid(
+            channel="x",
+            area=self.spoiler_areas[1],
+            duration=duration,
+            system=self.system,
+        )
 
-        self.spoiler_z3 = pp.make_trapezoid(channel="z", area=self.spoiler_areas[2], duration=duration, system=self.system)
-        self.spoiler_y3 = pp.make_trapezoid(channel="y", area=self.spoiler_areas[2], duration=duration, system=self.system)
-        self.spoiler_x3 = pp.make_trapezoid(channel="x", area=self.spoiler_areas[2], duration=duration, system=self.system)
+        self.spoiler_z3 = pp.make_trapezoid(
+            channel="z",
+            area=self.spoiler_areas[2],
+            duration=duration,
+            system=self.system,
+        )
+        self.spoiler_y3 = pp.make_trapezoid(
+            channel="y",
+            area=self.spoiler_areas[2],
+            duration=duration,
+            system=self.system,
+        )
+        self.spoiler_x3 = pp.make_trapezoid(
+            channel="x",
+            area=self.spoiler_areas[2],
+            duration=duration,
+            system=self.system,
+        )
 
         if self.uniform_spoiler_areas:
             if self.uniform_spoiler_directions:
@@ -325,7 +401,15 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                 self.spoiler2 = self.spoiler_y2
                 self.spoiler3 = self.spoiler_x3
 
-    def _init_diffusion_params(self, b_value, b_directions, b_0_frequency, small_delta, big_DELTA, rf180_spoiler):
+    def _init_diffusion_params(
+        self,
+        b_value,
+        b_directions,
+        b_0_frequency,
+        small_delta,
+        big_DELTA,
+        rf180_spoiler,
+    ):
         """Store diffusion-weighting parameters and retrieve the gradient direction table.
 
         ``small_delta`` and ``big_DELTA`` are stored as ``None`` when auto-computation is
@@ -346,14 +430,18 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         self.b_value: int = b_value
         self.b_0_frequency: int = b_0_frequency
         self.b_dirs = b_directions
-        self.b_directions: np.ndarray = get_diffusion_directions(b_directions, b_0_frequency)
+        self.b_directions: np.ndarray = get_diffusion_directions(
+            b_directions, b_0_frequency
+        )
         self.small_delta: float = small_delta
         self.big_DELTA: float = big_DELTA
         self._user_small_delta = small_delta
         self._user_big_DELTA = big_DELTA
 
         if self.big_DELTA or self.small_delta:
-            assert self.big_DELTA and self.small_delta, "Both big_DELTA and small_delta must be set together."
+            assert (
+                self.big_DELTA and self.small_delta
+            ), "Both big_DELTA and small_delta must be set together."
 
     def _init_se(self, TE, rf180_duration):
         """Create the 180° refocusing pulse and placeholder SE readout objects.
@@ -391,11 +479,15 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             self.rf180_1 = self.rf180_2 = self.rf180_3 = self.rf180
 
         # Phase encoding gradient amplitudes (used by base DiffusionSE, kept for compatibility)
-        self.phase_encoding_gradients = (np.arange(self.Ny) - self.Ny / 2) * self.delta_k
+        self.phase_encoding_gradients = (
+            np.arange(self.Ny) - self.Ny / 2
+        ) * self.delta_k
 
         # SE readout objects — these get overwritten by _try_epi_fit but are needed
         # for the intermediate _init_se path to complete without error.
-        self.flat_time_raster = align2rastertime_ceil(self.readout_time, 2 * self.system.grad_raster_time)
+        self.flat_time_raster = align2rastertime_ceil(
+            self.readout_time, 2 * self.system.grad_raster_time
+        )
         self.gx_raster_difference = self.flat_time_raster - self.readout_time
         self.gx_amplitude = self.k_width / self.flat_time_raster
         self.gx = pp.make_trapezoid(
@@ -486,9 +578,13 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                     f"EPI readout does not fit in TE={self.TE*1e3:.2f} ms with pff={self.partial_fourier_factor:.2f}, "
                     f"reducing pff to {self.partial_fourier_factor - fit_step:.2f} and retrying..."
                 )
-                self.partial_fourier_factor = np.round(self.partial_fourier_factor - fit_step, 2)
+                self.partial_fourier_factor = np.round(
+                    self.partial_fourier_factor - fit_step, 2
+                )
                 if self.partial_fourier_factor < 0.5:
-                    raise ValueError("Partial Fourier factor reduced below 0.5, cannot fit EPI readout in TE.")
+                    raise ValueError(
+                        "Partial Fourier factor reduced below 0.5, cannot fit EPI readout in TE."
+                    )
 
     def _try_epi_fit(self):
         """Attempt to fit the EPI readout and diffusion gradients within TE constraints.
@@ -547,22 +643,30 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         # Time from start of RF180 block to RF180 k-space centre
         rf180_center_with_delay = rf180_center + self.rf180.delay
         # Time from RF180 k-space centre to end of the RF180+gz180 block
-        time_after_180 = pp.calc_duration(self.rf180, self.gz180) - rf180_center_with_delay
+        time_after_180 = (
+            pp.calc_duration(self.rf180, self.gz180) - rf180_center_with_delay
+        )
 
         # delayTE1: total free time between gz90_reph and start of RF180 block
         # = TE/2 − (time_after_90 + gz90_reph + rf180_center_with_delay + optional spoiler)
-        delayTE1_raw = self.TE / 2 - (time_after_90 + pp.calc_duration(self.gz90_reph) + rf180_center_with_delay)
+        delayTE1_raw = self.TE / 2 - (
+            time_after_90 + pp.calc_duration(self.gz90_reph) + rf180_center_with_delay
+        )
         if self.rf180_spoiler:
             delayTE1_raw -= pp.calc_duration(self.spoiler_z)
 
         # delayTE2: free time after RF180 block before EPI k-space centre
         # = TE/2 − (time_after_180 + prephaser + time_to_echo + optional spoiler)
-        delayTE2_raw = self.TE / 2 - (time_after_180 + self.prephaser_duration + self.time_until_echo)
+        delayTE2_raw = self.TE / 2 - (
+            time_after_180 + self.prephaser_duration + self.time_until_echo
+        )
         if self.rf180_spoiler:
             delayTE2_raw -= pp.calc_duration(self.spoiler_z)
 
         if delayTE2_raw < 0:
-            self.logger.warning(f"TE too short for EPI readout! delayTE2_raw={delayTE2_raw*1e3:.3f} ms")
+            self.logger.warning(
+                f"TE too short for EPI readout! delayTE2_raw={delayTE2_raw*1e3:.3f} ms"
+            )
             return (False, f"DelayTE2 ({delayTE2_raw*1e3:.3f} ms) is negative")
 
         # Raster-align delayTE1; compensate delayTE2 for the rounding residual so the
@@ -571,7 +675,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         delayTE1_error = delayTE1 - delayTE1_raw
 
         delayTE2_compensated = delayTE2_raw - delayTE1_error
-        delayTE2 = align2rastertime_nearest(delayTE2_compensated, self.system.grad_raster_time)
+        delayTE2 = align2rastertime_nearest(
+            delayTE2_compensated, self.system.grad_raster_time
+        )
 
         if delayTE1 < 0:
             self.logger.warning(f"delayTE1 ({delayTE1*1e3:.3f} ms) is negative!")
@@ -586,7 +692,10 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         if self.small_delta is None or self.big_DELTA is None:
             # Auto mode: fill as much of the available TE/2 window as possible
             available_window = min(delayTE1, delayTE2)
-            max_ramp_time = align2rastertime_ceil(self.system.max_grad / self.system.max_slew, self.system.grad_raster_time)
+            max_ramp_time = align2rastertime_ceil(
+                self.system.max_grad / self.system.max_slew,
+                self.system.grad_raster_time,
+            )
             # Leave room for the gradient ramps on both sides of the flat top
             small_delta = available_window - 2 * max_ramp_time
             # big_DELTA: onset-to-onset separation = first gradient window + RF180 block
@@ -596,10 +705,14 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             big_DELTA = self.big_DELTA
 
         if small_delta <= 0:
-            self.logger.warning(f"small_delta ({small_delta*1e3:.3f} ms) is non-positive!")
+            self.logger.warning(
+                f"small_delta ({small_delta*1e3:.3f} ms) is non-positive!"
+            )
             return (False, f"small_delta ({small_delta*1e3:.3f} ms) is non-positive!")
 
-        diffusion_gradient_amplitude = calc_diffusion_gradient_amplitude(self.b_value, small_delta, big_DELTA)
+        diffusion_gradient_amplitude = calc_diffusion_gradient_amplitude(
+            self.b_value, small_delta, big_DELTA
+        )
 
         self.diffusion_gradient_amplitude = diffusion_gradient_amplitude
         self.small_delta = small_delta
@@ -613,7 +726,10 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                     f"exceeds max_grad ({self.system.max_grad:.0f} Hz/m) for auto small_delta="
                     f"{small_delta*1e3:.2f} ms. Returning False for fit loop to retry."
                 )
-                return (False, f"Amplitude {diffusion_gradient_amplitude:.0f} Hz/m exceeds max_grad for auto small_delta")
+                return (
+                    False,
+                    f"Amplitude {diffusion_gradient_amplitude:.0f} Hz/m exceeds max_grad for auto small_delta",
+                )
 
             trap_params = calc_area_preserving_trapezoid(
                 diffusion_gradient_amplitude,
@@ -656,17 +772,27 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                     flat_time=trap_params["flat_time"],
                 )
             except ValueError as e:
-                self.logger.error(f"Could not create area-preserving diffusion gradient: {e}")
-                return (False, f"Could not create area-preserving diffusion gradient: {e}")
+                self.logger.error(
+                    f"Could not create area-preserving diffusion gradient: {e}"
+                )
+                return (
+                    False,
+                    f"Could not create area-preserving diffusion gradient: {e}",
+                )
 
             self.diffusion_gradient_flat_time = g_diffusion_dummy.flat_time
             self.diffusion_gradient_rise_time = g_diffusion_dummy.rise_time
         else:
-            max_rise_time = align2rastertime_ceil(diffusion_gradient_amplitude / self.system.max_slew, self.system.grad_raster_time)
+            max_rise_time = align2rastertime_ceil(
+                diffusion_gradient_amplitude / self.system.max_slew,
+                self.system.grad_raster_time,
+            )
             min_flat_time = small_delta - 2 * max_rise_time
 
             if min_flat_time < 0:
-                self.logger.error(f"minimum flat time ({min_flat_time*1e3:.3f} ms) is negative!")
+                self.logger.error(
+                    f"minimum flat time ({min_flat_time*1e3:.3f} ms) is negative!"
+                )
                 return (False, f"small_delta too short for worst-case ramp times")
 
             try:
@@ -680,7 +806,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                 self.diffusion_gradient_flat_time = g_diffusion_dummy.flat_time
                 self.diffusion_gradient_rise_time = g_diffusion_dummy.rise_time
             except ValueError as e:
-                self.logger.error(f"Could not create diffusion gradient with amplitude {diffusion_gradient_amplitude} Hz/m: {e}")
+                self.logger.error(
+                    f"Could not create diffusion gradient with amplitude {diffusion_gradient_amplitude} Hz/m: {e}"
+                )
                 return (False, f"Could not create diffusion gradient: {e}")
 
         diffusion_gradient_duration = pp.calc_duration(g_diffusion_dummy)
@@ -688,25 +816,43 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         # --- Enforce exact big_DELTA via inner delay between Gdiff1 and RF180_1 ---
         # delayTE1_inner fills the gap: big_DELTA = Gdiff1_duration + delayTE1_inner + RF180_block
         delayTE1_inner = big_DELTA - diffusion_gradient_duration - time_rf180_block
-        delayTE1_inner = align2rastertime_nearest(delayTE1_inner, self.system.grad_raster_time)
+        delayTE1_inner = align2rastertime_nearest(
+            delayTE1_inner, self.system.grad_raster_time
+        )
 
         if delayTE1_inner < 0:
-            self.logger.error(f"delayTE1_inner ({delayTE1_inner*1e3:.3f} ms) is negative! big_DELTA may be too small.")
+            self.logger.error(
+                f"delayTE1_inner ({delayTE1_inner*1e3:.3f} ms) is negative! big_DELTA may be too small."
+            )
             return (False, f"delayTE1_inner ({delayTE1_inner*1e3:.3f} ms) is negative")
 
         delay_before_diff1 = delayTE1 - diffusion_gradient_duration - delayTE1_inner
-        delay_before_diff1 = align2rastertime_nearest(delay_before_diff1, self.system.grad_raster_time)
+        delay_before_diff1 = align2rastertime_nearest(
+            delay_before_diff1, self.system.grad_raster_time
+        )
 
         if delay_before_diff1 < 0:
-            self.logger.error(f"delay_before_diff1 ({delay_before_diff1*1e3:.3f} ms) is negative! big_DELTA may be too large for TE.")
-            return (False, f"delay_before_diff1 ({delay_before_diff1*1e3:.3f} ms) is negative")
+            self.logger.error(
+                f"delay_before_diff1 ({delay_before_diff1*1e3:.3f} ms) is negative! big_DELTA may be too large for TE."
+            )
+            return (
+                False,
+                f"delay_before_diff1 ({delay_before_diff1*1e3:.3f} ms) is negative",
+            )
 
         delayTE2_adjusted = delayTE2 - diffusion_gradient_duration
-        delayTE2_adjusted = align2rastertime_nearest(delayTE2_adjusted, self.system.grad_raster_time)
+        delayTE2_adjusted = align2rastertime_nearest(
+            delayTE2_adjusted, self.system.grad_raster_time
+        )
 
         if delayTE2_adjusted < 0:
-            self.logger.error(f"delayTE2_adjusted ({delayTE2_adjusted*1e3:.3f} ms) is negative!")
-            return (False, f"delayTE2_adjusted ({delayTE2_adjusted*1e3:.3f} ms) is negative")
+            self.logger.error(
+                f"delayTE2_adjusted ({delayTE2_adjusted*1e3:.3f} ms) is negative!"
+            )
+            return (
+                False,
+                f"delayTE2_adjusted ({delayTE2_adjusted*1e3:.3f} ms) is negative",
+            )
 
         # --- Sub-raster TE correction: absorb any remaining timing error into delayTE2 ---
         # Accumulate the actual TE1 from all blocks, then compute how many raster ticks
@@ -728,19 +874,37 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             + self.prephaser_duration
             + self.time_until_echo
         )
-        te_correction_ticks = int(np.floor((self.TE - (actual_TE1 + actual_TE2)) / self.system.grad_raster_time + 0.5))
+        te_correction_ticks = int(
+            np.floor(
+                (self.TE - (actual_TE1 + actual_TE2)) / self.system.grad_raster_time
+                + 0.5
+            )
+        )
         if te_correction_ticks != 0:
-            self.logger.info(f"TE tick correction: {te_correction_ticks} ticks ({te_correction_ticks * self.system.grad_raster_time * 1e6:.1f} us)")
+            self.logger.info(
+                f"TE tick correction: {te_correction_ticks} ticks ({te_correction_ticks * self.system.grad_raster_time * 1e6:.1f} us)"
+            )
         delayTE2_adjusted += te_correction_ticks * self.system.grad_raster_time
 
         if delayTE2_adjusted < 0:
-            self.logger.error(f"delayTE2_adjusted after TE correction ({delayTE2_adjusted*1e3:.3f} ms) is negative!")
-            return (False, f"delayTE2_adjusted after TE correction ({delayTE2_adjusted*1e3:.3f} ms) is negative")
+            self.logger.error(
+                f"delayTE2_adjusted after TE correction ({delayTE2_adjusted*1e3:.3f} ms) is negative!"
+            )
+            return (
+                False,
+                f"delayTE2_adjusted after TE correction ({delayTE2_adjusted*1e3:.3f} ms) is negative",
+            )
 
         # Verify actual big_DELTA
-        actual_big_DELTA = diffusion_gradient_duration + delayTE1_inner + time_rf180_block
-        self.logger.info(f"Requested big_DELTA: {big_DELTA*1e3:.2f} ms, Actual big_DELTA: {actual_big_DELTA*1e3:.2f} ms")
-        self.logger.info(f"delay_before_diff1: {delay_before_diff1*1e3:.2f} ms, delayTE1_inner: {delayTE1_inner*1e3:.2f} ms")
+        actual_big_DELTA = (
+            diffusion_gradient_duration + delayTE1_inner + time_rf180_block
+        )
+        self.logger.info(
+            f"Requested big_DELTA: {big_DELTA*1e3:.2f} ms, Actual big_DELTA: {actual_big_DELTA*1e3:.2f} ms"
+        )
+        self.logger.info(
+            f"delay_before_diff1: {delay_before_diff1*1e3:.2f} ms, delayTE1_inner: {delayTE1_inner*1e3:.2f} ms"
+        )
         self.logger.info(f"delayTE2_adjusted: {delayTE2_adjusted*1e3:.2f} ms")
         self.logger.info(f"Calculated small_delta: {small_delta*1e3:.2f} ms")
         self.logger.info(f"Calculated big_DELTA: {big_DELTA*1e3:.2f} ms")
@@ -826,8 +990,15 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         time_after_epi1_echo = self.epi_duration - self.time_until_echo
 
         # Minimum half-interval on each side of RF180_2
-        before_rf180_2 = time_after_epi1_echo + spoiler_dur + self.rf180_center_with_delay
-        after_rf180_2 = self.time_after_180 + spoiler_dur + self.epi2.prephaser_duration + self.epi2.time_until_echo
+        before_rf180_2 = (
+            time_after_epi1_echo + spoiler_dur + self.rf180_center_with_delay
+        )
+        after_rf180_2 = (
+            self.time_after_180
+            + spoiler_dur
+            + self.epi2.prephaser_duration
+            + self.epi2.time_until_echo
+        )
 
         # T_half_min: the larger of the two sides, raster-aligned — guarantees both delays ≥ 0
         T_half_min = align2rastertime_ceil(
@@ -835,8 +1006,12 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             self.system.grad_raster_time,
         )
 
-        raw_delay_before_rf180_2 = align2rastertime_nearest(T_half_min - before_rf180_2, self.system.grad_raster_time)
-        raw_delay_before_epi2 = align2rastertime_nearest(T_half_min - after_rf180_2, self.system.grad_raster_time)
+        raw_delay_before_rf180_2 = align2rastertime_nearest(
+            T_half_min - before_rf180_2, self.system.grad_raster_time
+        )
+        raw_delay_before_epi2 = align2rastertime_nearest(
+            T_half_min - after_rf180_2, self.system.grad_raster_time
+        )
         raw_TE2 = (
             self.TE
             + time_after_epi1_echo
@@ -892,9 +1067,13 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         )
 
         self.logger.info(f"--- Second Echo (EPI2) Timing ---")
-        self.logger.info(f"T_half: {T_half*1e3:.2f} ms (limiting constraint: {'before' if before_rf180_2 >= after_rf180_2 else 'after'} RF180_2)")
+        self.logger.info(
+            f"T_half: {T_half*1e3:.2f} ms (limiting constraint: {'before' if before_rf180_2 >= after_rf180_2 else 'after'} RF180_2)"
+        )
         self.logger.info(f"TE1: {self.TE*1e3:.2f} ms, TE2: {self.TE2*1e3:.2f} ms")
-        self.logger.info(f"delay_before_rf180_2: {self.delay_before_rf180_2*1e3:.2f} ms")
+        self.logger.info(
+            f"delay_before_rf180_2: {self.delay_before_rf180_2*1e3:.2f} ms"
+        )
         self.logger.info(f"delay_before_epi2: {self.delay_before_epi2*1e3:.2f} ms")
         self.logger.info(f"epi2_total_time: {self.epi2_total_time*1e3:.2f} ms")
         self.epi2._log_parameters()
@@ -933,16 +1112,27 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
 
         time_after_epi2_echo = self.epi2.duration - self.epi2.time_until_echo
 
-        before_rf180_3 = time_after_epi2_echo + spoiler_dur + self.rf180_center_with_delay
-        after_rf180_3 = self.time_after_180 + spoiler_dur + self.epi3.prephaser_duration + self.epi3.time_until_echo
+        before_rf180_3 = (
+            time_after_epi2_echo + spoiler_dur + self.rf180_center_with_delay
+        )
+        after_rf180_3 = (
+            self.time_after_180
+            + spoiler_dur
+            + self.epi3.prephaser_duration
+            + self.epi3.time_until_echo
+        )
 
         T_half_3_min = align2rastertime_ceil(
             max(before_rf180_3, after_rf180_3),
             self.system.grad_raster_time,
         )
 
-        raw_delay_before_rf180_3 = align2rastertime_nearest(T_half_3_min - before_rf180_3, self.system.grad_raster_time)
-        raw_delay_before_epi3 = align2rastertime_nearest(T_half_3_min - after_rf180_3, self.system.grad_raster_time)
+        raw_delay_before_rf180_3 = align2rastertime_nearest(
+            T_half_3_min - before_rf180_3, self.system.grad_raster_time
+        )
+        raw_delay_before_epi3 = align2rastertime_nearest(
+            T_half_3_min - after_rf180_3, self.system.grad_raster_time
+        )
 
         raw_TE3 = (
             self.TE2
@@ -1000,7 +1190,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             f"T_half_3: {self.T_half_3*1e3:.2f} ms (limiting constraint: {'before' if before_rf180_3 >= after_rf180_3 else 'after'} RF180_3)"
         )
         self.logger.info(f"TE2: {self.TE2*1e3:.2f} ms, TE3: {self.TE3*1e3:.2f} ms")
-        self.logger.info(f"delay_before_rf180_3: {self.delay_before_rf180_3*1e3:.2f} ms")
+        self.logger.info(
+            f"delay_before_rf180_3: {self.delay_before_rf180_3*1e3:.2f} ms"
+        )
         self.logger.info(f"delay_before_epi3: {self.delay_before_epi3*1e3:.2f} ms")
         self.logger.info(f"epi3_total_time: {self.epi3_total_time*1e3:.2f} ms")
         self.epi3._log_parameters()
@@ -1039,20 +1231,30 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             time_used += 2 * pp.calc_duration(self.spoiler_z)
 
         if self.end_spoilers:
-            time_used += pp.calc_duration(self.spoiler_x, self.spoiler_y, self.spoiler_z)
+            time_used += pp.calc_duration(
+                self.spoiler_x, self.spoiler_y, self.spoiler_z
+            )
 
         if self.ramp_sampling == "none":
             time_used -= self.epi.blip_duration / 2
 
         delayTR_exact = self.TR - time_used
-        self.delayTR = align2rastertime_nearest(delayTR_exact, self.system.grad_raster_time)
+        self.delayTR = align2rastertime_nearest(
+            delayTR_exact, self.system.grad_raster_time
+        )
 
         if self.delayTR < 0:
             self.logger.warning(f"TR too short! delayTR={self.delayTR*1e3:.2f} ms")
 
-        self.logger.info(f"TE1: {self.TE*1e3:.2f} ms, TE2: {self.TE2*1e3:.2f} ms, TE3: {self.TE3*1e3:.2f} ms")
-        self.logger.info(f"delayTR_exact: {delayTR_exact*1e3:.2f} ms -> delayTR: {self.delayTR*1e3:.2f} ms")
-        self.logger.info(f"Time used in TR (without delayTR): {time_used*1e3:.2f} ms of {self.TR*1e3:.2f} ms")
+        self.logger.info(
+            f"TE1: {self.TE*1e3:.2f} ms, TE2: {self.TE2*1e3:.2f} ms, TE3: {self.TE3*1e3:.2f} ms"
+        )
+        self.logger.info(
+            f"delayTR_exact: {delayTR_exact*1e3:.2f} ms -> delayTR: {self.delayTR*1e3:.2f} ms"
+        )
+        self.logger.info(
+            f"Time used in TR (without delayTR): {time_used*1e3:.2f} ms of {self.TR*1e3:.2f} ms"
+        )
 
     # =========================================================================
     # Navigator (from EPIDiffusionSEPulseqSeqV2)
@@ -1073,8 +1275,15 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         Args:
             seq: pypulseq :class:`pp.Sequence` object to append blocks to.
         """
-        delay_to_180 = self.TE / 2 - self.time_after_90 - pp.calc_duration(self.gz90_reph) - self.rf180_center_with_delay
-        delay_to_180 = align2rastertime_nearest(delay_to_180, self.system.grad_raster_time)
+        delay_to_180 = (
+            self.TE / 2
+            - self.time_after_90
+            - pp.calc_duration(self.gz90_reph)
+            - self.rf180_center_with_delay
+        )
+        delay_to_180 = align2rastertime_nearest(
+            delay_to_180, self.system.grad_raster_time
+        )
         delay_to_echo = (
             self.TE / 2
             - self.time_after_180
@@ -1084,7 +1293,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             - self.epi.gx_.rise_time
             - (self.epi.gx_.flat_time / 2)
         )
-        delay_to_echo = align2rastertime_nearest(delay_to_echo, self.system.grad_raster_time)
+        delay_to_echo = align2rastertime_nearest(
+            delay_to_echo, self.system.grad_raster_time
+        )
         self.delay_to_echo_nav = delay_to_echo
 
         delayTR = (
@@ -1141,11 +1352,10 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             seq.add_block(self.epi.gx, self.epi.adc)
             seq.add_block(pp.make_delay(delayTR))
 
-
     # =========================================================================
     # Write sequence to file
     # =========================================================================`
-    
+
     def write(self, filename=None, overwrite=True):
         """Write the sequence to a Pulseq ``.seq`` file with embedded metadata.
 
@@ -1171,7 +1381,7 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         self.seq.set_definition("TR", self.TR)
         self.seq.set_definition("SliceThickness", self.slice_thickness)
         self.seq.set_definition("NNavigatorLines", 3)
-        self.seq.set_definition("DiffusionDirections", self.b_directions.tolist())  
+        self.seq.set_definition("DiffusionDirections", self.b_directions.tolist())
         self.seq.set_definition("bValue", self.b_value)
         self.seq.set_definition("b0Frequency", self.b_0_frequency)
         self.seq.set_definition("SmallDelta", self.small_delta)
@@ -1180,19 +1390,22 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         self.seq.set_definition("AdcDwellTime", self.adc.dwell)
         self.seq.set_definition("AccelerationFactor", self.epi_acceleration_factor)
         self.seq.set_definition("PartialFourierFactor", self.partial_fourier_factor)
-        
 
         self.logger.info(f"Writing sequence to file: {filename}")
-        
+
         if os.path.exists(filename):
             if overwrite:
-                self.logger.warning(f"File {filename} already exists and overwrite=True. Overwriting.")
+                self.logger.warning(
+                    f"File {filename} already exists and overwrite=True. Overwriting."
+                )
                 self.seq.write(filename, v141_compat=self.v141_compat)
             else:
-                self.logger.warning(f"File {filename} already exists and overwrite=False. Skipping write.")
+                self.logger.warning(
+                    f"File {filename} already exists and overwrite=False. Skipping write."
+                )
                 return
         else:
-                self.seq.write(filename, v141_compat=self.v141_compat)
+            self.seq.write(filename, v141_compat=self.v141_compat)
 
     # =========================================================================
     # Sequence build (triple SE)
@@ -1234,37 +1447,53 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                     pp.make_label(label="REP", type="SET", value=0),
                     pp.make_label(label="ECO", type="SET", value=0),
                 )  # Set calibration labels
-            
+
             self._add_navigator_acquisition(seq)
-            
+
             if self.labeled:
                 seq.add_block(
-                    pp.make_label(label="NAV", type="SET", value=0), pp.make_label(label="IMA", type="SET", value=1)
+                    pp.make_label(label="NAV", type="SET", value=0),
+                    pp.make_label(label="IMA", type="SET", value=1),
                 )  # Clear calibration labels
 
         for i, dir in enumerate(self.b_directions):
             if self.labeled:
-                seq.add_block(pp.make_label(label="REP", type="SET", value=i))  # Set repetition label for diffusion direction
+                seq.add_block(
+                    pp.make_label(label="REP", type="SET", value=i)
+                )  # Set repetition label for diffusion direction
 
-            self.logger.info(f"Generating sequence for b-direction: {dir}, b-value: {self.b_value}")
+            self.logger.info(
+                f"Generating sequence for b-direction: {dir}, b-value: {self.b_value}"
+            )
 
             diffusion_gradients = self.diffusion_gradient_amplitude * dir
-            self.logger.info(f"Diffusion gradient amplitudes (Hz/m): {diffusion_gradients} for b-value: {self.b_value} direction: {dir}")
+            self.logger.info(
+                f"Diffusion gradient amplitudes (Hz/m): {diffusion_gradients} for b-value: {self.b_value} direction: {dir}"
+            )
 
             # Per-axis rise time: minimum ramp to reach this axis's amplitude at max_slew.
             # Zero-amplitude axes use one grad-raster tick to avoid a zero-duration trapezoid.
             gx_rise_time = (
-                align2rastertime_ceil(abs(diffusion_gradients[0]) / self.system.max_slew, self.system.grad_raster_time)
+                align2rastertime_ceil(
+                    abs(diffusion_gradients[0]) / self.system.max_slew,
+                    self.system.grad_raster_time,
+                )
                 if abs(diffusion_gradients[0]) > 0
                 else self.system.grad_raster_time
             )
             gy_rise_time = (
-                align2rastertime_ceil(abs(diffusion_gradients[1]) / self.system.max_slew, self.system.grad_raster_time)
+                align2rastertime_ceil(
+                    abs(diffusion_gradients[1]) / self.system.max_slew,
+                    self.system.grad_raster_time,
+                )
                 if abs(diffusion_gradients[1]) > 0
                 else self.system.grad_raster_time
             )
             gz_rise_time = (
-                align2rastertime_ceil(abs(diffusion_gradients[2]) / self.system.max_slew, self.system.grad_raster_time)
+                align2rastertime_ceil(
+                    abs(diffusion_gradients[2]) / self.system.max_slew,
+                    self.system.grad_raster_time,
+                )
                 if abs(diffusion_gradients[2]) > 0
                 else self.system.grad_raster_time
             )
@@ -1274,8 +1503,12 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             gy_flat_time = self.diffusion_gradient_total_duration - 2 * gy_rise_time
             gz_flat_time = self.diffusion_gradient_total_duration - 2 * gz_rise_time
 
-            self.logger.info(f"Individual rise times (ms): gx={gx_rise_time*1e3:.3f}, gy={gy_rise_time*1e3:.3f}, gz={gz_rise_time*1e3:.3f}")
-            self.logger.info(f"Individual flat times (ms): gx={gx_flat_time*1e3:.3f}, gy={gy_flat_time*1e3:.3f}, gz={gz_flat_time*1e3:.3f}")
+            self.logger.info(
+                f"Individual rise times (ms): gx={gx_rise_time*1e3:.3f}, gy={gy_rise_time*1e3:.3f}, gz={gz_rise_time*1e3:.3f}"
+            )
+            self.logger.info(
+                f"Individual flat times (ms): gx={gx_flat_time*1e3:.3f}, gy={gy_flat_time*1e3:.3f}, gz={gz_flat_time*1e3:.3f}"
+            )
 
             gx_diff = pp.make_trapezoid(
                 channel="x",
@@ -1350,7 +1583,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             seq.add_block(self.epi.gx_prephaser, self.epi.gy_prephaser)
 
             if self.labeled:
-                seq.add_block(pp.make_label(label="ECO", type="SET", value=0))  # Set ECO label for first echo
+                seq.add_block(
+                    pp.make_label(label="ECO", type="SET", value=0)
+                )  # Set ECO label for first echo
                 self.epi.add_to_sequence(seq)
             else:
                 self.epi.add_to_sequence_unlabeled(seq)
@@ -1371,7 +1606,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                 seq.add_block(pp.make_delay(self.delay_before_epi2))
 
             if self.labeled:
-                seq.add_block(pp.make_label(label="ECO", type="SET", value=1))  # Set ECO label for second echo
+                seq.add_block(
+                    pp.make_label(label="ECO", type="SET", value=1)
+                )  # Set ECO label for second echo
                 self.epi2.add_to_sequence(seq)
             else:
                 self.epi2.add_to_sequence_unlabeled(seq)
@@ -1392,7 +1629,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                 seq.add_block(pp.make_delay(self.delay_before_epi3))
 
             if self.labeled:
-                seq.add_block(pp.make_label(label="ECO", type="SET", value=2))  # Set ECO label for third echo
+                seq.add_block(
+                    pp.make_label(label="ECO", type="SET", value=2)
+                )  # Set ECO label for third echo
                 self.epi3.add_to_sequence(seq)
             else:
                 self.epi3.add_to_sequence_unlabeled(seq)
@@ -1417,7 +1656,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
 
     def init_message(self):
         """Log a one-line banner announcing this sequence type at construction time."""
-        self.logger.info(f"Initializing EPI Diffusion Triple SE Pulseq Sequence: {self.name}")
+        self.logger.info(
+            f"Initializing EPI Diffusion Triple SE Pulseq Sequence: {self.name}"
+        )
 
     def metadata(self):
         """Flattened metadata from PulseqSeq + SE + Diffusion."""
@@ -1448,32 +1689,38 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         # Build base filename (PulseqSeq)
         filename = f"{self.name}{'_v14' if self.v141_compat else '_v15'}_{self.system_type.value}_fov{self.fov*1000:.0f}mm_{self.Ny}x{self.Nx}x{self.N_slices}_TR{self.TR*1000:.0f}ms"
         # SE suffix
-        filename += f"_TEs[{self.TE*1000:.0f}-{self.TE2*1000:.0f}-{self.TE3*1000:.0f}]ms"
+        filename += (
+            f"_TEs[{self.TE*1000:.0f}-{self.TE2*1000:.0f}-{self.TE3*1000:.0f}]ms"
+        )
         # Diffusion suffix
         filename += f"_b{self.b_value}_dirs{self.b_dirs}{f'_b0s{self.b_0_frequency}' if self.b_0_frequency else ''}_delta{self.small_delta*1e3:.2f}ms_DELTA{self.big_DELTA*1e3:.2f}ms"
         # EPI suffix
         if self.ramp_sampling == "none":
-            ramping_str = "" 
+            ramping_str = ""
         elif self.ramp_sampling == "optimized":
             ramping_str = "_opt"
         elif self.ramp_sampling == "ramp_sampled":
             ramping_str = "_rs"
         filename += f"_pff{self.partial_fourier_factor*100:.0f}_acc{self.epi_acceleration_factor}{ramping_str}"
-        
+
         # Blip direction suffix
         blip_dirs_str = ["d" if blip else "u" for blip in self.blip_down]
         filename += f"_blips-{''.join(blip_dirs_str)}"
-        
+
         filename += ".seq"
 
         if full_path:
             return os.path.join(self.save_dir, filename)
         return filename
 
-    def validate_sequence_properties(self, expected_values: dict = None, tolerance: float = None) -> tuple[bool, list[str]]:
+    def validate_sequence_properties(
+        self, expected_values: dict = None, tolerance: float = None
+    ) -> tuple[bool, list[str]]:
         """Flattened validation from PulseqSeq + DiffusionSE."""
         # Run base PulseqSeq validation
-        all_passed, failed_tests = super().validate_sequence_properties(expected_values, tolerance)
+        all_passed, failed_tests = super().validate_sequence_properties(
+            expected_values, tolerance
+        )
 
         self.logger.info("Validating Diffusion SE sequence properties...")
 
@@ -1498,7 +1745,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                 failed_tests.append(msg)
                 all_passed = False
             else:
-                self.logger.info(f"b-value validation: requested={self.b_value:.2f}, calculated={b_calc:.2f} s/mm^2")
+                self.logger.info(
+                    f"b-value validation: requested={self.b_value:.2f}, calculated={b_calc:.2f} s/mm^2"
+                )
 
         # Validate diffusion timing
         if self.small_delta > 0 and self.big_DELTA > 0:
@@ -1508,7 +1757,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
                 failed_tests.append(msg)
                 all_passed = False
             else:
-                self.logger.info(f"Diffusion timing: small_delta={self.small_delta*1e3:.2f} ms, big_DELTA={self.big_DELTA*1e3:.2f} ms")
+                self.logger.info(
+                    f"Diffusion timing: small_delta={self.small_delta*1e3:.2f} ms, big_DELTA={self.big_DELTA*1e3:.2f} ms"
+                )
 
         # Validate delay timing
         delay_checks = [
@@ -1575,7 +1826,12 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         )
         # second half = RF180_1 centre → EPI1 echo centre
         te1_half_after = (
-            self.time_after_180 + spoiler_dur + self.diffusion_gradient_duration + self.delayTE2 + self.prephaser_duration + self.time_until_echo
+            self.time_after_180
+            + spoiler_dur
+            + self.diffusion_gradient_duration
+            + self.delayTE2
+            + self.prephaser_duration
+            + self.time_until_echo
         )
         echo1_time = te1_half_before + te1_half_after
 
@@ -1583,18 +1839,40 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         time_after_epi1 = self.epi_duration - self.time_until_echo
 
         # first half  = EPI1 echo → RF180_2 centre
-        te2_half_before = time_after_epi1 + self.delay_before_rf180_2 + spoiler_dur + self.rf180_center_with_delay
+        te2_half_before = (
+            time_after_epi1
+            + self.delay_before_rf180_2
+            + spoiler_dur
+            + self.rf180_center_with_delay
+        )
         # second half = RF180_2 centre → EPI2 echo centre
-        te2_half_after = self.time_after_180 + spoiler_dur + self.epi2.prephaser_duration + self.delay_before_epi2 + self.epi2.time_until_echo
+        te2_half_after = (
+            self.time_after_180
+            + spoiler_dur
+            + self.epi2.prephaser_duration
+            + self.delay_before_epi2
+            + self.epi2.time_until_echo
+        )
         echo2_time = echo1_time + te2_half_before + te2_half_after
 
         # ── Echo 3: RF90 centre → EPI3 k-space centre ────────────────────
         time_after_epi2 = self.epi2.duration - self.epi2.time_until_echo
 
         # first half  = EPI2 echo → RF180_3 centre
-        te3_half_before = time_after_epi2 + self.delay_before_rf180_3 + spoiler_dur + self.rf180_center_with_delay
+        te3_half_before = (
+            time_after_epi2
+            + self.delay_before_rf180_3
+            + spoiler_dur
+            + self.rf180_center_with_delay
+        )
         # second half = RF180_3 centre → EPI3 echo centre
-        te3_half_after = self.time_after_180 + spoiler_dur + self.epi3.prephaser_duration + self.delay_before_epi3 + self.epi3.time_until_echo
+        te3_half_after = (
+            self.time_after_180
+            + spoiler_dur
+            + self.epi3.prephaser_duration
+            + self.delay_before_epi3
+            + self.epi3.time_until_echo
+        )
         echo3_time = echo2_time + te3_half_before + te3_half_after
 
         self.logger.info("=" * 60)
@@ -1610,7 +1888,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             err_us = (computed - expected) * 1e6
             ok = abs(err_us) <= tolerance_us
             msg = (
-                f"{label}: expected={expected*1e3:.4f} ms, " f"computed={computed*1e3:.4f} ms, " f"error={err_us:+.2f} µs — {'OK' if ok else 'FAIL'}"
+                f"{label}: expected={expected*1e3:.4f} ms, "
+                f"computed={computed*1e3:.4f} ms, "
+                f"error={err_us:+.2f} µs — {'OK' if ok else 'FAIL'}"
             )
             self.logger.info(msg)
             if not ok:
@@ -1641,7 +1921,9 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         if passed:
             self.logger.info("Echo timing validation PASSED")
         else:
-            self.logger.warning(f"Echo timing validation: {len(errors)} check(s) FAILED")
+            self.logger.warning(
+                f"Echo timing validation: {len(errors)} check(s) FAILED"
+            )
         self.logger.info("=" * 60)
 
         return passed, errors
@@ -1656,17 +1938,20 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             print(
                 f"Spoiler 1:" + f"\n\t  Amplitude: {self.spoiler1.amplitude} Hz/m"
                 f"\n\t  Duration: {pp.calc_duration(self.spoiler1)} s"
-                f"\n\t  Area: {self.spoiler1.area} Hz*s/m" + f"\n\t  Axis: {self.spoiler1.channel}"
+                f"\n\t  Area: {self.spoiler1.area} Hz*s/m"
+                + f"\n\t  Axis: {self.spoiler1.channel}"
             )
             print(
                 f"Spoiler 2:" + f"\n\t  Amplitude: {self.spoiler2.amplitude} Hz/m"
                 f"\n\t  Duration: {pp.calc_duration(self.spoiler2)} s"
-                f"\n\t  Area: {self.spoiler2.area} Hz*s/m" + f"\n\t  Axis: {self.spoiler2.channel}"
+                f"\n\t  Area: {self.spoiler2.area} Hz*s/m"
+                + f"\n\t  Axis: {self.spoiler2.channel}"
             )
             print(
                 f"Spoiler 3:" + f"\n\t  Amplitude: {self.spoiler3.amplitude} Hz/m"
                 f"\n\t  Duration: {pp.calc_duration(self.spoiler3)} s"
-                f"\n\t  Area: {self.spoiler3.area} Hz*s/m" + f"\n\t  Axis: {self.spoiler3.channel}"
+                f"\n\t  Area: {self.spoiler3.area} Hz*s/m"
+                + f"\n\t  Axis: {self.spoiler3.channel}"
             )
         else:
             self.logger.info("No RF180 spoiler applied.")
@@ -1694,7 +1979,11 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             plot_now: Display plot immediately (default=True).
         """
         if self.TR:
-            time_range = (0, self.TR * TRs if TRs > 0 else np.inf) if time_range is None else time_range
+            time_range = (
+                (0, self.TR * TRs if TRs > 0 else np.inf)
+                if time_range is None
+                else time_range
+            )
 
         self.seq.plot(
             time_range=time_range,
@@ -1712,11 +2001,22 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         te_labels = ["TE1", "TE2", "TE3"]
         for te_time, te_label in zip(te_times, te_labels):
             for ax in fig.axes:
-                ax.axvline(x=te_time, color="red", linestyle="--", linewidth=1, alpha=0.7, label=te_label)
+                ax.axvline(
+                    x=te_time,
+                    color="red",
+                    linestyle="--",
+                    linewidth=1,
+                    alpha=0.7,
+                    label=te_label,
+                )
 
         plt.legend()
         if save:
-            plt.savefig(os.path.join(self.save_dir, f"{self.name}_sequence_diagram.png"), dpi=150, bbox_inches="tight")
+            plt.savefig(
+                os.path.join(self.save_dir, f"{self.name}_sequence_diagram.png"),
+                dpi=150,
+                bbox_inches="tight",
+            )
 
 
 # %%
@@ -1745,8 +2045,8 @@ if __name__ == "__main__":
         system_type=SystemLimitType.EXTREME,
         rf180_spoiler=True,
         ramp_sampling="ramp_sampled",
-        spoiler_amplitude=.95,
-         b_0_frequency=3,
+        spoiler_amplitude=0.95,
+        b_0_frequency=3,
         b_directions=3,
         b_value=500,
         small_delta=0.018,
@@ -1768,7 +2068,7 @@ if __name__ == "__main__":
     epi4.plot_kspace_traj()
     epi4.write()
     epi4.report()
-    # plot_gradient_and_slew(epi4.seq)                         
+    # plot_gradient_and_slew(epi4.seq)
     epi4.validate_echo_timing()
 
 # %%

@@ -131,8 +131,14 @@ class EPIReadout:
             logger = logging.getLogger(__name__)
 
         assert acceleration_factor >= 1, "Acceleration factor must be >= 1"
-        assert 0.5 <= partial_fourier_factor <= 1.0, "Partial Fourier must be in [0.5, 1.0]"
-        assert ramp_sampling in ["none", "optimized", "ramp_sampled"], "ramp_sampling must be 'none', 'optimized', or 'ramp_sampled'"
+        assert (
+            0.5 <= partial_fourier_factor <= 1.0
+        ), "Partial Fourier must be in [0.5, 1.0]"
+        assert ramp_sampling in [
+            "none",
+            "optimized",
+            "ramp_sampled",
+        ], "ramp_sampling must be 'none', 'optimized', or 'ramp_sampled'"
 
         self.fov = fov
         self.Nx = Nx
@@ -153,17 +159,20 @@ class EPIReadout:
 
         self.polarity = 1 if not blip_down else -1
 
-
         # Calculate k-space parameters
         self.delta_k = 1 / fov
         self.k_width = Nx * self.delta_k
-        self.adc_dead_time = self.system.adc_dead_time if self.adc_dead_time_correction else 0
+        self.adc_dead_time = (
+            self.system.adc_dead_time if self.adc_dead_time_correction else 0
+        )
 
         # Design gradients based on ramp sampling mode
         if ramp_sampling == "ramp_sampled":
             self._design_ramp_sampled_gradients()
         else:
-            raise ValueError(f"Invalid ramp_sampling option: {ramp_sampling}. Choose from 'none', 'optimized', or 'ramp_sampled'.")
+            raise ValueError(
+                f"Invalid ramp_sampling option: {ramp_sampling}. Choose from 'none', 'optimized', or 'ramp_sampled'."
+            )
 
         # Setup k-space trajectory (independent of gradient design)
         self._setup_kspace_trajectory()
@@ -209,7 +218,9 @@ class EPIReadout:
         """
         # Nominal readout window — used to size gx; actual value is updated below
         self.readout_time = self.Nx * self.dwell_time
-        self.logger.info(f"[RS] readout_time = {self.readout_time*1e6:.2f} us  (Nx={self.Nx}, dwell={self.dwell_time*1e6:.3f} us)")
+        self.logger.info(
+            f"[RS] readout_time = {self.readout_time*1e6:.2f} us  (Nx={self.Nx}, dwell={self.dwell_time*1e6:.3f} us)"
+        )
 
         # Minimum blip half-duration at max_slew to encode one ky step (delta_k × R)
         half_blip = _align2rastertime_ceil(
@@ -219,7 +230,9 @@ class EPIReadout:
         blip_duration = 2 * half_blip
         self.blip_duration = blip_duration
         self.min_blip_duration = blip_duration
-        self.logger.info(f"[RS] blip: half_blip={half_blip*1e6:.2f} us  blip_duration={blip_duration*1e6:.2f} us")
+        self.logger.info(
+            f"[RS] blip: half_blip={half_blip*1e6:.2f} us  blip_duration={blip_duration*1e6:.2f} us"
+        )
 
         self.gy = pp.make_trapezoid(
             channel="y",
@@ -239,10 +252,18 @@ class EPIReadout:
         extra_area = (blip_duration / 2) ** 2 * self.system.max_slew
         # Align to 2×grad_raster so gx.flat_time/2 (the EPI echo offset) stays on the gradient grid
         double_raster = 2 * self.system.grad_raster_time
-        gx_duration = _align2rastertime_ceil(self.readout_time + blip_duration, double_raster)
-        _gx_min_duration = pp.calc_duration(pp.make_trapezoid(channel="x", system=self.system, area=self.k_width + extra_area))
+        gx_duration = _align2rastertime_ceil(
+            self.readout_time + blip_duration, double_raster
+        )
+        _gx_min_duration = pp.calc_duration(
+            pp.make_trapezoid(
+                channel="x", system=self.system, area=self.k_width + extra_area
+            )
+        )
         if gx_duration < _gx_min_duration:
-            self.logger.info(f"[RS] gx duration too short ({gx_duration*1e6:.2f} us < min {_gx_min_duration*1e6:.2f} us) -- using solver minimum")
+            self.logger.info(
+                f"[RS] gx duration too short ({gx_duration*1e6:.2f} us < min {_gx_min_duration*1e6:.2f} us) -- using solver minimum"
+            )
             gx_duration = _align2rastertime_ceil(_gx_min_duration, double_raster)
         self.logger.info(
             f"[RS] gx design: extra_area={extra_area:.4f} m^-1  total_area={self.k_width + extra_area:.4f} m^-1  duration={gx_duration*1e6:.2f} us"
@@ -273,16 +294,24 @@ class EPIReadout:
         gx.area = gx.amplitude * (gx.flat_time + gx.rise_time / 2 + gx.fall_time / 2)
         gx.flat_area = gx.amplitude * gx.flat_time
         self.gx = gx
-        self.logger.info(f"[RS] gx (post-scale): amp={gx.amplitude:.2f} T/m  area={gx.area:.4f} m^-1")
+        self.logger.info(
+            f"[RS] gx (post-scale): amp={gx.amplitude:.2f} T/m  area={gx.area:.4f} m^-1"
+        )
 
         # Nyquist dwell time for the rescaled gradient amplitude, then floor to ADC raster
         adc_dwell_nyquist = self.delta_k / self.gx.amplitude
-        rs_dwell = _align2rastertime_floor(adc_dwell_nyquist, self.system.adc_raster_time)
-        self.logger.info(f"[RS] ADC dwell: nyquist={adc_dwell_nyquist*1e6:.4f} us  rs_dwell={rs_dwell*1e6:.4f} us")
+        rs_dwell = _align2rastertime_floor(
+            adc_dwell_nyquist, self.system.adc_raster_time
+        )
+        self.logger.info(
+            f"[RS] ADC dwell: nyquist={adc_dwell_nyquist*1e6:.4f} us  rs_dwell={rs_dwell*1e6:.4f} us"
+        )
 
         # Round sample count to the nearest multiple of 4 (required by most scanner ADC hardware)
         adc_samples = int(np.floor(self.readout_time / rs_dwell / 4)) * 4
-        self.logger.info(f"[RS] ADC samples: {adc_samples}  (Nx={self.Nx}, factor={adc_samples/self.Nx:.3f}x)")
+        self.logger.info(
+            f"[RS] ADC samples: {adc_samples}  (Nx={self.Nx}, factor={adc_samples/self.Nx:.3f}x)"
+        )
 
         # Centre the ADC window on the k-space echo (gx flat-time midpoint)
         time_to_center = rs_dwell * ((adc_samples - 1) / 2 + 0.5)
@@ -311,7 +340,9 @@ class EPIReadout:
         # Count how many ADC samples fall on each ramp — needed for ramp-correction during recon
         sample_times = adc_delay + np.arange(adc_samples) * rs_dwell
         self.rs_ramp_samples_rise = int(np.sum(sample_times < self.gx.rise_time))
-        self.rs_ramp_samples_fall = int(np.sum(sample_times >= self.gx.rise_time + self.gx.flat_time))
+        self.rs_ramp_samples_fall = int(
+            np.sum(sample_times >= self.gx.rise_time + self.gx.flat_time)
+        )
         self.logger.info(
             f"[RS] ramp samples: rise={self.rs_ramp_samples_rise}  flat={adc_samples - self.rs_ramp_samples_rise - self.rs_ramp_samples_fall}  fall={self.rs_ramp_samples_fall}"
         )
@@ -337,15 +368,23 @@ class EPIReadout:
         # Post-echo half: always symmetric (Ny/2 lines from DC upward)
         Ny_post_requested = int(np.round(self.Ny / 2))
         # Pre-echo half: extended by partial Fourier so total = round(PF × Ny)
-        Ny_pre_requested = int(np.round(self.partial_fourier_factor * self.Ny)) - Ny_post_requested
+        Ny_pre_requested = (
+            int(np.round(self.partial_fourier_factor * self.Ny)) - Ny_post_requested
+        )
 
         if self.blip_down:
             # Start at ky=0 stepping negative (pre-echo), then positive (post-echo)
             ky_negative = np.arange(0, -Ny_pre_requested - 1, -self.acceleration_factor)
-            ky_positive = np.arange(self.acceleration_factor, Ny_post_requested, self.acceleration_factor)
+            ky_positive = np.arange(
+                self.acceleration_factor, Ny_post_requested, self.acceleration_factor
+            )
         else:
             # Reversed: start from positive ky and step toward negative
-            ky_negative = np.arange(-self.acceleration_factor, -Ny_post_requested - 1, -self.acceleration_factor)
+            ky_negative = np.arange(
+                -self.acceleration_factor,
+                -Ny_post_requested - 1,
+                -self.acceleration_factor,
+            )
             ky_positive = np.arange(0, Ny_pre_requested, self.acceleration_factor)
 
         # Sort ascending then reverse for blip-up so acquisition order matches traversal direction
@@ -361,6 +400,7 @@ class EPIReadout:
         self.Ny_post = len(self.ky_indices) - self.echo_line_index
         self.Ny_eff = len(self.ky_indices)
         self.ky_start = self.ky_indices[0]
+
     # =========================================================================
     # Gradient variants
     # =========================================================================
@@ -379,7 +419,9 @@ class EPIReadout:
           with gx so no dead time is introduced between readout lines
         """
         if self.blip_down:
-            half_blip_raster = _align2rastertime_ceil(self.blip_duration / 2, self.system.grad_raster_time)
+            half_blip_raster = _align2rastertime_ceil(
+                self.blip_duration / 2, self.system.grad_raster_time
+            )
             blip_duration_raster = half_blip_raster * 2
             self.gy = pp.make_trapezoid(
                 channel="y",
@@ -389,7 +431,9 @@ class EPIReadout:
             )
             self.blip_duration = blip_duration_raster
         else:
-            half_blip_raster = _align2rastertime_ceil(self.blip_duration / 2, self.system.grad_raster_time)
+            half_blip_raster = _align2rastertime_ceil(
+                self.blip_duration / 2, self.system.grad_raster_time
+            )
             if self.blip_duration != half_blip_raster * 2:
                 blip_duration_raster = half_blip_raster * 2
                 self.gy = pp.make_trapezoid(
@@ -417,12 +461,16 @@ class EPIReadout:
                 self.adc.delay = self.gx.delay + self.gx.rise_time
 
         # Split the blip at its midpoint so each half can be overlapped with the adjacent gx ramp
-        split_time = _align2rastertime_ceil(self.blip_duration / 2, self.system.grad_raster_time)
+        split_time = _align2rastertime_ceil(
+            self.blip_duration / 2, self.system.grad_raster_time
+        )
         self.gy_blip_rise, self.gy_blip_fall = pp.split_gradient_at(self.gy, split_time)
 
         if self.ramp_sampling in ["none"]:
             # Non-ramp-sampled: gx starts after the blip fall half; blip rise starts after gx ends
-            half_blip = _align2rastertime_ceil(self.blip_duration / 2, self.system.grad_raster_time)
+            half_blip = _align2rastertime_ceil(
+                self.blip_duration / 2, self.system.grad_raster_time
+            )
             self.gx.delay = half_blip
             self.adc.delay = self.gx.delay + self.gx.rise_time
             self.gy_blip_fall.delay = 0
@@ -434,7 +482,9 @@ class EPIReadout:
 
         # Composite blip for interior lines: fall half of previous blip + rise half of next blip,
         # merged into a single gradient event played simultaneously with gx
-        self.gy_composite = pp.add_gradients([self.gy_blip_fall, self.gy_blip_rise], system=self.system)
+        self.gy_composite = pp.add_gradients(
+            [self.gy_blip_fall, self.gy_blip_rise], system=self.system
+        )
 
         # Negative-polarity readout for odd lines (EPI zigzag)
         self.gx_ = pp.make_trapezoid(
@@ -451,11 +501,14 @@ class EPIReadout:
         if self.ramp_sampling not in ["none"]:
             if self.ramp_sampling == "ramp_sampled":
                 assert (
-                    abs(pp.calc_duration(self.gy_composite) - pp.calc_duration(self.gx)) <= self.system.grad_raster_time
+                    abs(pp.calc_duration(self.gy_composite) - pp.calc_duration(self.gx))
+                    <= self.system.grad_raster_time
                 ), f"Timing mismatch: gx {pp.calc_duration(self.gx)} vs gy_composite {pp.calc_duration(self.gy_composite)}"
             else:
                 assert np.isclose(
-                    pp.calc_duration(self.gx), pp.calc_duration(self.gy_composite), rtol=1e-6
+                    pp.calc_duration(self.gx),
+                    pp.calc_duration(self.gy_composite),
+                    rtol=1e-6,
                 ), f"Timing mismatch: gx {pp.calc_duration(self.gx)} vs gy_composite {pp.calc_duration(self.gy_composite)}"
 
     # =========================================================================
@@ -477,7 +530,9 @@ class EPIReadout:
         """
         # kx area accumulated from the start of gx up to the ADC centre of the first line
         ramp_area = self.gx.amplitude * self.gx.rise_time / 2
-        flat_area_to_adc_center = self.gx.amplitude * (self.adc.delay + self.readout_time / 2 - self.gx.delay - self.gx.rise_time)
+        flat_area_to_adc_center = self.gx.amplitude * (
+            self.adc.delay + self.readout_time / 2 - self.gx.delay - self.gx.rise_time
+        )
         gx_area_to_echo = ramp_area + flat_area_to_adc_center
 
         if self.prephaser_duration is None:
@@ -540,9 +595,13 @@ class EPIReadout:
                 )
 
             if self.simultan_rephasers:
-                self.rephaser_duration = pp.calc_duration(self.gx_rephaser, self.gy_rephaser)
+                self.rephaser_duration = pp.calc_duration(
+                    self.gx_rephaser, self.gy_rephaser
+                )
             else:
-                self.rephaser_duration = pp.calc_duration(self.gx_rephaser) + pp.calc_duration(self.gy_rephaser)
+                self.rephaser_duration = pp.calc_duration(
+                    self.gx_rephaser
+                ) + pp.calc_duration(self.gy_rephaser)
 
     # =========================================================================
     # Timing
@@ -569,7 +628,9 @@ class EPIReadout:
         self.line_duration = line_duration
 
         # Time from readout start to the ADC centre of the echo line (ky=0)
-        self.time_until_echo = self.Ny_pre * line_duration + self.adc.delay + self.readout_time / 2
+        self.time_until_echo = (
+            self.Ny_pre * line_duration + self.adc.delay + self.readout_time / 2
+        )
 
         if self.ramp_sampling == "none":
             # Last line has no trailing half-blip, so subtract half_blip from the total
@@ -707,9 +768,13 @@ class EPIReadout:
                 left=self.gx_rephaser,
                 right=self.gy_rephaser,
             )
-            self.rephaser_duration = pp.calc_duration(self.gx_rephaser, self.gy_rephaser)
+            self.rephaser_duration = pp.calc_duration(
+                self.gx_rephaser, self.gy_rephaser
+            )
         else:
-            self.rephaser_duration = pp.calc_duration(self.gx_rephaser) + pp.calc_duration(self.gy_rephaser)
+            self.rephaser_duration = pp.calc_duration(
+                self.gx_rephaser
+            ) + pp.calc_duration(self.gy_rephaser)
 
     # =========================================================================
     # Readout events
@@ -735,7 +800,9 @@ class EPIReadout:
         Returns:
             Tuple (gx_event, gy_event, adc_event) ready to be passed to ``seq.add_block()``.
         """
-        assert 0 <= line_index < self.Ny_eff, f"line_index must be in [0, {self.Ny_eff})"
+        assert (
+            0 <= line_index < self.Ny_eff
+        ), f"line_index must be in [0, {self.Ny_eff})"
 
         # Alternate readout polarity: even→positive, odd→negative
         if line_index % 2 == 0:
@@ -745,11 +812,11 @@ class EPIReadout:
 
         # Select the appropriate blip variant based on position in the echo train
         if line_index == 0:
-            gy = self.gy_blip_rise       # first line: only the leading half-blip
+            gy = self.gy_blip_rise  # first line: only the leading half-blip
         elif line_index == self.Ny_eff - 1:
-            gy = self.gy_blip_fall       # last line: only the trailing half-blip
+            gy = self.gy_blip_fall  # last line: only the trailing half-blip
         else:
-            gy = self.gy_composite       # interior lines: merged fall + rise half-blips
+            gy = self.gy_composite  # interior lines: merged fall + rise half-blips
 
         # Odd lines read in the opposite direction; create a new ADC with the raster offset
         if line_index % 2 == 1:
@@ -795,7 +862,9 @@ class EPIReadout:
             labels = [
                 pp.make_label(label="LIN", type="SET", value=absolute_lin),
                 pp.make_label(label="REV", type="SET", value=is_reversed),
-                pp.make_label(label="NAV", type="SET", value=0),  # 0 = imaging data, not navigator
+                pp.make_label(
+                    label="NAV", type="SET", value=0
+                ),  # 0 = imaging data, not navigator
             ]
 
             seq.add_block(*labels, gx, gy, adc)
@@ -842,7 +911,9 @@ class EPIReadout:
             self.logger.info(f"Ramp sampling: {self.ramp_sampling}")
             if self.ramp_sampling in ["partial", "full"]:
                 self.logger.info(f"  RS dwell time: {self.rs_dwell_time*1e6:.1f} us")
-                self.logger.info(f"  RS ADC samples: {self.rs_adc_samples} (vs {self.Nx} Nx)")
+                self.logger.info(
+                    f"  RS ADC samples: {self.rs_adc_samples} (vs {self.Nx} Nx)"
+                )
             self.logger.info(f"Acceleration: R={self.acceleration_factor}")
             self.logger.info(f"Partial Fourier: {self.partial_fourier_factor}")
             self.logger.info(f"\nAcquisition:")
