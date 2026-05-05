@@ -1123,7 +1123,7 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         )
 
         T_half_3_min = align2rastertime_ceil(
-            max(before_rf180_3, after_rf180_3),
+            max(before_rf180_3, after_rf180_3, self.T_half),
             self.system.grad_raster_time,
         )
 
@@ -1390,7 +1390,8 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         self.seq.set_definition("AdcDwellTime", self.adc.dwell)
         self.seq.set_definition("AccelerationFactor", self.epi_acceleration_factor)
         self.seq.set_definition("PartialFourierFactor", self.partial_fourier_factor)
-
+        self.seq.set_definition("Nx", self.Nx)
+        self.seq.set_definition("Ny", self.Ny)
         self.logger.info(f"Writing sequence to file: {filename}")
 
         if os.path.exists(filename):
@@ -2023,52 +2024,53 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
 if __name__ == "__main__":
     acceleration_factor = 1
     pff = 0.75
-    res = 2.33333333333333
+    res = 2.33333333333333333333333333333
     dwell = 5 * 0.000001
-
-    epi4 = EPIDiffusionTripleSEPulseqSeq(
-        name=f"DiffMESE",
-        fov=224e-3,
-        Nx=96,
-        Ny=96,
-        resolution=2.33333,
-        slice_thickness=2.33333e-3,
-        partial_fourier_factor=0.75,
-        TR=5000,
-        TE=75,
-        rf90_duration=0.003,
-        rf180_duration=0.003,
-        dwell_time=dwell,
-        prephaser_duration=0.0005,
-        rephasers=True,
-        simultan_rephasers=False,
-        system_type=SystemLimitType.EXTREME,
-        rf180_spoiler=True,
-        ramp_sampling="ramp_sampled",
-        spoiler_amplitude=0.95,
-        b_0_frequency=3,
-        b_directions=3,
-        b_value=500,
-        small_delta=0.018,
-        big_DELTA=0.035,
-        acceleration_factor=1,
-        v141_compat=True,
-        fit_epi=False,
-        calibration_readout=True,
-        adc_dead_time_correction=True,
-        uniform_spoiler_areas=True,
-        uniform_spoiler_directions=False,
-        phase_cycling=False,
-        labeled=True,
-        blip_down=False,
-        alternating_blip_polarity=True,
-    )
-    # epi3.plot()
-    # epi4.print_spoiler_info()
-    epi4.plot_kspace_traj()
-    epi4.write()
-    epi4.report()
-    # plot_gradient_and_slew(epi4.seq)
-    epi4.validate_echo_timing()
+    
+for cp in [True, False]:
+        epi4 = EPIDiffusionTripleSEPulseqSeq(
+            name=f"DiffMESE",
+            fov=224e-3,
+            Nx=96,
+            Ny=96,
+            resolution=res,
+            slice_thickness=res*1e-3,
+            partial_fourier_factor=0.75,
+            TR=5000,
+            TE=80,
+            rf90_duration=0.003,
+            rf180_duration=0.003,
+            dwell_time=dwell,
+            prephaser_duration=0.0005,
+            rephasers=True,
+            simultan_rephasers=False,
+            system_type=SystemLimitType.EXTREME,
+            rf180_spoiler=True,
+            ramp_sampling="ramp_sampled",
+            spoiler_amplitude=0.95,
+            b_0_frequency=3,
+            b_directions=3,
+            b_value=500,
+            small_delta=0.018,
+            big_DELTA=0.035,
+            acceleration_factor=1,
+            v141_compat=cp,
+            fit_epi=False,
+            calibration_readout=True,
+            adc_dead_time_correction=True,
+            uniform_spoiler_areas=True,
+            uniform_spoiler_directions=False,
+            phase_cycling=False,
+            labeled=True,
+            blip_down=False,
+            alternating_blip_polarity=False,
+        )
+        # epi3.plot()
+        # epi4.print_spoiler_info()
+        epi4.plot_kspace_traj()
+        epi4.write()
+        epi4.report()
+        # plot_gradient_and_slew(epi4.seq)
+        epi4.validate_echo_timing()
 
 # %%
