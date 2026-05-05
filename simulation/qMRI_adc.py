@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from pypulseq import Sequence
 from EPIDiffusionSEPulseqSeq import EPIDiffusionSEPulseqSeq
 from utils import SystemLimitType
-from simulation_utils import *
+from utils_simulation import *
 from mrinufft import get_operator
 
 np.int = int
@@ -51,7 +51,7 @@ TE = 100  # [ms] - must be feasible for the highest b-value below
 # Vary b-values instead of TEs. b=0 is required as the reference (S0).
 # A typical clinical DWI protocol uses b=0 and b=1000; for ADC fitting any
 # 2+ b-values work, but spreading them improves the fit conditioning.
-b_values = np.arange(100, 1601, 250)  # [s/mm^2]
+b_values = np.arange(100, 2101, 250)  # [s/mm^2]
 
 TR = 5000
 Nx = Ny = int(fov / slice_thickness)
@@ -429,7 +429,7 @@ plt.show()
 #                       (high-b, low-SNR points dominate the residual), so
 #                       it usually overestimates ADC at low SNR.
 # =================================================================================
-from diffusion_utils import create_adc_map  # noqa: E402
+from utils_diffusion import create_adc_map  # noqa: E402
 
 ims = []
 for method in ["nlls", "loglinear"]:

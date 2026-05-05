@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 from pypulseq import Sequence
 from EPIDiffusionSEPulseqSeq import EPIDiffusionSEPulseqSeq
 from utils import SystemLimitType
-from simulation_utils import *
+from utils_simulation import *
 from mrinufft import get_operator
 
 np.int = int
@@ -377,7 +377,7 @@ plt.colorbar(label='T2 (ms)')
 plt.title('Quantitative T2 Map')
 
 # %%
-from relaxometry_utils import create_t2_map
+from utils_relaxometry import create_t2_map
 
 ims = []
 for i in ['nlls', 'loglinear']:
