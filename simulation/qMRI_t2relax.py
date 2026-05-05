@@ -43,7 +43,7 @@ PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
 fov = 224e-3
 res = 2.33333333
 slice_thickness = res*1e-3
-TEs = np.arange(70, 205, 25)  # From 70 to 200 with a step of 25
+TEs = np.arange(65, 255, 5)  # From 70 to 410 with a step of 5
 TR = 5000
 b_value = 1000
 Nx = Ny = int(fov / slice_thickness)
@@ -228,7 +228,7 @@ for te in TEs:
     trajectories.append(direction_trajectories)
 
 
-    # ==============================================================================
+    # =================================================================================
     # Non-uniform FFT reconstruction (NUFFT) - for the ramp sampling pattern in the EPI readout
     # =================================================================================
 
@@ -257,17 +257,10 @@ for te in TEs:
 
 print("Sequence generation complete.")
 # %%
-# fig, axs = plt.subplots(1, len(TEs), figsize=(15, 5))
-# fig.suptitle(f"Reconstructed images (b0)")  # Add a title for the entire figure
-# axs = axs.flatten()
-# for i, recon in enumerate(reconstructed_images):
-#     b0 = np.rot90(recon[0], -1)
-#     axs[i].imshow(np.abs(b0), cmap="gray")
-#     axs[i].set_title(f"TE={TEs[i]} ms")
-# plt.show()
-
 for dir_idx, dir in enumerate(seq.b_directions):
-    fig, axs = plt.subplots(1, len(TEs), figsize=(15, 5))
+    rows = int(len(TEs)/5) if len(TEs) % 5 == 0 else int(len(TEs)/5) + 1
+    
+    fig, axs = plt.subplots(rows, 5, figsize=(15, 3*rows))
     axs = axs.flatten()
     fig.suptitle(f"Reconstructed images (dir {seq.b_directions[dir_idx]})")  # Add a title for the entire figure
     for i, recon in enumerate(reconstructed_images):
@@ -277,4 +270,217 @@ for dir_idx, dir in enumerate(seq.b_directions):
         axs[i].set_axis_off()
     plt.tight_layout()  # Adjust layout to make room for the suptitle
     plt.show()
+
+reconstructed_images = np.array(reconstructed_images)  # shape: (n_TEs, n_directions, Ny, Nx)
+print(f"Reconstructed images array shape: {reconstructed_images.shape}")
+reconstructed_b0_images = reconstructed_images[:, 0, :, :]  # shape: (n_TEs, Ny, Nx)
+print(f"Extracted b0 images shape: {reconstructed_b0_images.shape}")
+reconstructed_b0_magnitude_images = np.abs(reconstructed_b0_images)  # Take magnitude for T2 fitting
+
+# %%
+from scipy.optimize import curve_fit
+
+def mono_exponential(te, s0, t2):
+    return s0 * np.exp(-te / t2)
+
+def create_t2_map_scipy(data, te_list):
+    """
+    data: (n_te, 96, 96) array
+    te_list: array of echo times
+    """
+    n_te, ny, nx = data.shape
+    t2_map = np.zeros((ny, nx))
+    s0_map = np.zeros((ny, nx))
+
+    # Threshold to ignore background noise (tweak 0.1 as needed)
+    threshold = np.max(data) * 0.1
+
+    for y in range(ny):
+        for x in range(nx):
+            pixel_series = data[:, y, x]
+            
+            # Only fit if signal is above noise floor
+            if pixel_series[0] > threshold:
+                try:
+                    # Initial guesses are crucial for NLLS:
+                    # s0_guess = first echo, t2_guess = 50ms
+                    popt, _ = curve_fit(
+                        mono_exponential, 
+                        te_list, 
+                        pixel_series, 
+                        p0=[pixel_series[0], 50],
+                        bounds=(0, [np.inf, 1600]) # Constrain T2 to realistic values
+                    )
+                    s0_map[y, x], t2_map[y, x] = popt
+                except:
+                    # If the fit fails (e.g. non-convergent), leave as 0
+                    continue
+                    
+    return t2_map, s0_map
+
+
+# Assuming 't2_result' is your 96x96 map
+t2_result, s0_result = create_t2_map_scipy(reconstructed_b0_magnitude_images, TEs)
+plt.imshow(np.rot90(t2_result, -1), cmap='viridis',)
+plt.colorbar(label='T2 (ms)')
+plt.title('Quantitative T2 Map')
+
+# %%
+def mono_exponential(te, s0, t2):
+    """
+    Mono-exponential T2 decay model.
+ 
+    Parameters
+    ----------
+    te : array_like
+        Echo time(s) in milliseconds. Can be a scalar or 1D array.
+    s0 : float
+        Signal intensity extrapolated to TE = 0. Carries PD, T1,
+        receive-coil, and sequence-scaling factors.
+    t2 : float
+        Transverse relaxation time in milliseconds.
+ 
+    Returns
+    -------
+    ndarray or float
+        Predicted signal magnitude S(TE) = s0 * exp(-te / t2).
+ 
+    Notes
+    -----
+    Units of `te` and `t2` must match (both ms here). The model is
+    only valid for magnitude data above the noise floor; near the
+    noise floor, magnitude images follow a Rician distribution that
+    biases the fit toward longer T2.
+    """
+    return s0 * np.exp(-te / t2)
+ 
+ 
+def create_t2_map_scipy(data, te_list):
+    """
+    Compute a per-pixel T2 map by non-linear least-squares fitting.
+ 
+    For each pixel above a (global) intensity threshold, this fits the
+    mono-exponential model in `mono_exponential` to the signal-vs-TE
+    curve using `scipy.optimize.curve_fit` (Levenberg–Marquardt with
+    bound constraints, falls back to trust-region when bounds are set).
+ 
+    Parameters
+    ----------
+    data : ndarray, shape (n_te, ny, nx)
+        Stack of magnitude images, one per echo time. Axis 0 indexes
+        TE, axes 1 and 2 are spatial. Must be real-valued; pass
+        `np.abs(complex_data)` if your reconstruction is complex.
+    te_list : array_like, shape (n_te,)
+        Echo times in milliseconds, in the same order as `data`'s
+        first axis.
+ 
+    Returns
+    -------
+    t2_map : ndarray, shape (ny, nx)
+        Per-pixel T2 estimate in milliseconds. Pixels below the
+        intensity threshold or where the fit failed are set to 0.
+    s0_map : ndarray, shape (ny, nx)
+        Per-pixel S0 estimate (signal extrapolated to TE = 0), in the
+        same arbitrary intensity units as `data`. Useful as a QC image:
+        it should resemble a PD-weighted scan with no TE-dependent
+        contrast.
+ 
+    Notes
+    -----
+    Threshold
+        The background mask is built from a global threshold,
+        `0.5 * data.max()`. This is aggressive: the global maximum is
+        usually a bright CSF voxel at the shortest TE, so 50% of that
+        excludes much of the parenchyma. For brain data, a more
+        permissive threshold based on the first-echo image
+        (e.g. `0.05 * data[0].max()`) typically gives much better
+        coverage.
+ 
+    Initial guesses
+        - S0 is initialised to the first-echo intensity of the pixel.
+        - T2 is initialised to 50 ms (a reasonable WM-ish value).
+        Both are required because curve_fit's default Jacobian-free
+        starting point would otherwise be (1, 1), which converges
+        poorly for relaxometry.
+ 
+    Bounds
+        T2 is constrained to (0, 1600] ms. This rejects unphysical
+        negative values and clips runaway fits in noisy CSF voxels.
+        At 3T in vivo, CSF T2 can approach ~2000 ms; raise the upper
+        bound if that matters for your phantom.
+ 
+    Failure handling
+        Any exception during a per-pixel fit (non-convergence, bad
+        bounds, etc.) leaves that pixel at 0 in both output maps.
+        The bare `except` is broad - tighten to
+        `except (RuntimeError, ValueError):` if you need to surface
+        unrelated bugs.
+ 
+    Performance
+        This is a Python-level pixel loop with one curve_fit call per
+        voxel. For a 96x96 image (~9k pixels) it runs in seconds; for
+        full-resolution brain volumes it gets slow. A vectorised
+        log-linear fit (`np.linalg.lstsq` on `log(S)` vs TE across all
+        pixels at once) is dramatically faster and provides good
+        initial guesses for an optional NLLS refinement pass.
+    """
+    n_te, ny, nx = data.shape
+    t2_map = np.zeros((ny, nx))
+    s0_map = np.zeros((ny, nx))
+ 
+    # Background mask: skip pixels whose first-echo signal is below
+    # this fraction of the global maximum. NB: 0.5 is aggressive -
+    # see the docstring's "Threshold" note.
+    threshold = np.max(data) * 0.5
+ 
+    # Per-pixel fit. The outer loops are over image rows/columns;
+    # the inner curve_fit fits one decay curve at a time.
+    for y in range(ny):
+        for x in range(nx):
+            pixel_series = data[:, y, x]
+ 
+            # Reject background / low-SNR voxels using the first-echo
+            # intensity as a proxy for tissue signal.
+            if pixel_series[0] > threshold:
+                try:
+                    # p0: initial guess for [S0, T2]. Using the first
+                    #   echo as S0_guess is robust because S(TE_min)
+                    #   is the closest direct estimate of S0 we have.
+                    # bounds: keep both parameters non-negative and
+                    #   clip T2 to a physiologically plausible range.
+                    popt, _ = curve_fit(
+                        mono_exponential,
+                        te_list,
+                        pixel_series,
+                        p0=[pixel_series[0], 50],
+                        bounds=(0, [np.inf, 1600]),
+                    )
+                    s0_map[y, x], t2_map[y, x] = popt
+                except Exception:
+                    # Non-convergent fit - leave this voxel as 0.
+                    # Consider logging or counting these for QC.
+                    continue
+ 
+    return t2_map, s0_map
+
+# Assuming 't2_result' is your 96x96 map
+t2_result, s0_result = create_t2_map_scipy(reconstructed_b0_magnitude_images, TEs)
+plt.imshow(np.rot90(t2_result, -1), cmap='viridis',)
+plt.colorbar(label='T2 (ms)')
+plt.title('Quantitative T2 Map')
+
+# %%
+from relaxometry_utils import create_t2_map
+
+ims = []
+for i in ['nlls', 'loglinear']:
+    t2_result = create_t2_map(reconstructed_b0_magnitude_images, TEs, method=i)
+    ims.append(t2_result[0])
+
+fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+titles = ['NLLS Fit', 'Log-Linear Fit']
+for i, ax in enumerate(axs):
+    im = ax.imshow(np.rot90(ims[i], -1), cmap='viridis')
+    ax.set_title(titles[i])
+    fig.colorbar(im, ax=ax, label='T2 (ms)')
 # %%

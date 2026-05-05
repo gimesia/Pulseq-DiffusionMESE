@@ -42,3 +42,4 @@ coverage
 tqdm
 requests
 pyyaml
+juliacall
