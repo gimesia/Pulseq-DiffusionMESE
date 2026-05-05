@@ -1,9 +1,27 @@
-"""Bloch-equation simulation of the diffusion triple spin-echo (MESE) EPI sequence.
+"""
+Bloch-equation simulation of the diffusion triple spin-echo (MESE) EPI sequence.
 
-Signal structure per TR (after navigator calibration block):
-    [echo1: NY*PFF lines] → [echo2: NY lines] → [echo3: NY lines]   ×  N_directions
+Signal structure per TR (after the navigator calibration block)::
 
-Each echo is reconstructed independently via FFT and NUFFT.
+    [echo1: NY*PFF lines] → [echo2: NY lines] → [echo3: NY lines]   *  N_directions
+
+The script:
+    1. Loads a BrainWeb voxel-grid phantom (optionally inserts a synthetic tumour).
+    2. Imports the Pulseq ``.seq`` file and extracts sequence definitions (TE, TR,
+       b-value, diffusion directions, partial-Fourier factor, ADC samples).
+    3. Runs a MRzeroCore Bloch-equation graph simulation (GPU or CPU).
+    4. Splits the flat signal vector into calibration + per-direction * per-echo chunks.
+    5. Reconstructs each echo with FFT (zero-filled partial Fourier) and NUFFT
+       (density-compensated, ramp-sampling-aware via cufinufft).
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 - Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
 """
 
 # %%
@@ -34,7 +52,7 @@ PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
 # %% ==============================================================================
 #   Simulation parameters
 # =================================================================================
-NX = NY = 96
+NX = NY = 96 
 N_ECHOES = 3  # triple spin-echo
 
 use_GPU = torch.cuda.is_available()
@@ -42,7 +60,7 @@ use_GPU = torch.cuda.is_available()
 # %% ==============================================================================
 #   Phantom parameters
 # =================================================================================
-PHANTOM_IDX = 4
+PHANTOM_IDX = 0
 NZ = 10
 SLICE_IDX = 4
 
@@ -92,6 +110,7 @@ phantom_data = phantom.build()
 # =================================================================================
 SEQUENCE_IDX = 0
 
+
 sequences = [
     f for f in os.listdir(SEQUENCES_DIR_PATH) if f.endswith(".seq") and "v14" in f
 ]
@@ -104,15 +123,21 @@ sequence_path = os.path.join(SEQUENCES_DIR_PATH, sequences[SEQUENCE_IDX])
 
 seq0 = mr0.Sequence.import_file(sequence_path)
 seq = Sequence()
-seq.read(sequence_path)
+
+# IMPORTANT! 
+# The read-in Pulseq sequence needs to be in v15 in order to use the new calculate_kspace() API
+seq.read(sequence_path.replace("v14", "v15"))
 print(f"Loaded sequence {os.path.split(sequence_path)[-1]}")
 
 TR = seq.definitions.get("TR")
 TEs = seq.definitions.get("TE")  # list [TE1, TE2, TE3] in seconds
 AdcNumSamples = int(seq.definitions.get("AdcNumSamples"))
 N_navigator_lines = int(seq.definitions.get("NNavigatorLines"))
+NX = int(seq.definitions.get("Nx"))
+NY = int(seq.definitions.get("Ny"))
 PFF = float(seq.definitions.get("PartialFourierFactor"))  # echo 1 only
 BVAL = seq.definitions.get("bValue")
+N_directions_raw = seq.definitions.get("DiffusionDirections")
 fov = float(seq.definitions.get("FOV")[0])  # in-plane FOV in metres
 
 # Echo 1 uses partial Fourier; echoes 2 and 3 acquire the full k-space.
@@ -121,7 +146,6 @@ samples_per_echo = [n * AdcNumSamples for n in NY_acq]
 samples_per_dir = sum(samples_per_echo)
 samples_per_cal = N_navigator_lines * AdcNumSamples
 
-N_directions_raw = seq.definitions.get("DiffusionDirections")
 if isinstance(N_directions_raw, str):
     groups = re.findall(r"\[[^\[\]]*\]", N_directions_raw)
     directions = [list(ast.literal_eval(g)) for g in groups] if groups else []
@@ -202,6 +226,7 @@ print(
     f"Per-direction, per-echo signal shapes: "
     f"{[[e.shape for e in d] for d in dir_echo_signal]}"
 )
+# dir_echo_signal = np.stack(dir_echo_signal)  # shape (N_directions, N_ECHOES, NY_acq[e], AdcNumSamples)
 
 # %% ==============================================================================
 #   Ghost correction using calibration lines
@@ -209,6 +234,12 @@ print(
 #   correction is applied to all three echoes: the timing-related ghost phase is
 #   determined by the readout gradient waveform, which is identical for every echo.
 # =================================================================================
+# calib_np = (
+#     calib_signal.numpy() if hasattr(calib_signal, "numpy") else np.asarray(calib_signal)
+# )
+# gc_dir_signal = np.zeros_like(dir_echo_signal)
+# for i in range(N_directions):
+#     gc_dir_signal[i] = epi_ghost_correction(calib_np, dir_echo_signal[i])
 
 
 # %% ==============================================================================
@@ -325,4 +356,6 @@ for d in range(N_directions):
     plt.tight_layout()
     plt.show()
 
+# %%
+visualize_kspace_trajectory(seq)
 # %%

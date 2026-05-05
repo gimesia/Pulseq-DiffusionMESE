@@ -1,7 +1,26 @@
-"""Bloch-equation simulation of the diffusion-(ME)-SE sequence.
+"""
+Bloch-equation simulation of the diffusion single or multi-echo spin-echo (SE / MESE) EPI sequence.
 
-This script simulates the magnetisation evolution through the (ME)-SE echo train
-and plots the resulting echo amplitudes as a function of echo number.
+Toggle between single-echo (``MULTI_ECHO = False``) and triple-echo (``MULTI_ECHO = True``)
+mode via the configuration constant at the top of the script.
+
+The script:
+    1. Loads a BrainWeb voxel-grid phantom (optionally inserts a synthetic tumour).
+    2. Imports the Pulseq ``.seq`` file and extracts sequence definitions (TR, b-value,
+       diffusion directions, partial-Fourier factor, ADC samples, navigator lines).
+    3. Runs a MRzeroCore Bloch-equation graph simulation (GPU or CPU).
+    4. Splits the flat signal vector into calibration lines and per-direction k-space.
+    5. Applies navigator-based N/2 ghost correction (``epi_ghost_correction``).
+    6. Reconstructs with FFT and NUFFT (density-compensated, trajectory-aligned).
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
 """
 
 # %%
@@ -122,9 +141,8 @@ seq = Sequence()
 
 # IMPORTANT! 
 # The read-in Pulseq sequence needs to be in v15 in order to use the new calculate_kspace() API
-print(
-    f"Loaded sequence {os.path.split(sequence_path)[-1]}"
-)  # with {len(seq0.blocks)} blocks.")
+seq.read(sequence_path.replace("v14", "v15"))
+print(f"Loaded sequence {os.path.split(sequence_path)[-1]}")
 
 
 TR = seq.definitions.get("TR")
@@ -179,7 +197,7 @@ else:
 try:
     del seq0_gpu
     del phantom_data_gpu
-except:
+except Exception:
     pass
 torch.cuda.empty_cache()
 
@@ -246,10 +264,9 @@ for i in range(N_directions):
     plt.title(f"Ghost-corrected image for direction {i+1}")
     plt.axis("off")
 
-
-# %% =============================================================================
-# Non-uniform FFT reconstruction (NUFFT) - for the ramp sampling pattern in the EPI readout
-# =================================================================================\
+# %% ==============================================================================
+#   Calculate k-space trajectory
+# =================================================================================
 k_traj_adc, k_traj, t_excitation, t_refocusing, t_adc = seq.calculate_kspace()
 
 # k_traj_adc shape: (3, n_adc_samples) → rows are kx, ky, kz
@@ -279,19 +296,13 @@ direction_trajectories = np.array(direction_trajectories)
 print(f"Calibration trajectory shape: {calibration_trajectory.shape}")
 print(f"Directional trajectory shapes: {[t.shape for t in direction_trajectories]}")
 
-# calculate_kspace() integrates gradients cumulatively across the whole sequence.
-# Spoiler gradients between TRs cause each direction_trajectories[i] to start at a
-# different k-space offset. All EPI readouts share the same gradient waveform, so
-# subtract the per-TR DC offset to align all trajectories to a common origin.
-traj_ref = direction_trajectories[0]
-aligned_trajectories = np.array(
-    [t - t[0] + traj_ref[0] for t in direction_trajectories]
-)
 
+# %% ==============================================================================
+# Non-uniform FFT reconstruction (NUFFT) - for the ramp sampling pattern in the EPI readout
+# =================================================================================
 from mrinufft import get_operator
 
 img_size = (NY, NX)  # your Cartesian reconstruction grid size
-
 
 for i in range(N_directions):
     # Build one NUFFT operator shared across all directions (same EPI k-space trajectory)
@@ -330,28 +341,6 @@ for i in range(N_directions):
     plt.show()
 
 # %%
-def visualize_kspace_trajectory(seq: Sequence):
-    """Plot the continuous and ADC-sampled k-space trajectory for a sequence."""
-    # Trajectories (new API returns 5 values)
-    ktraj_adc, ktraj, _, _, t_adc = seq.calculate_kspace()
 
-    # Build a time axis for the continuous k-space (sampled on grad raster)
-    t_ktraj = np.arange(ktraj.shape[1]) * seq.grad_raster_time
-
-    plt.figure()
-    plt.plot(t_ktraj, ktraj.T)  # full k-space vs time (kx, ky, kz)
-    plt.plot(t_adc, ktraj_adc[0, :], ".")  # ADC-sampled kx vs t
-    plt.title("Full k-space vs time")
-    plt.xlabel("t (s)")
-
-    plt.figure()
-    plt.plot(ktraj[0, :], ktraj[1, :], "b")  # continuous trajectory (2D view)
-    plt.axis("equal")
-    plt.plot(ktraj_adc[0, :], ktraj_adc[1, :], "r.")  # ADC samples
-    plt.title("k-space (2D)")
-    plt.xlabel("kx")
-    plt.ylabel("ky")
-
-    plt.show()
 visualize_kspace_trajectory(seq, )
 # %%

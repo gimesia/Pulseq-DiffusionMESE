@@ -1,6 +1,23 @@
+"""
+Simulation utility functions for Pulseq DiffusionMESE showcase.
+
+Provides helpers for phantom manipulation, EPI Nyquist ghost correction, and
+k-space-to-image reconstruction used by simulateSE.py and simulateMESE.py.
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+"""
 from typing import Any, Literal, Literal, Tuple, Union
 
+from matplotlib import pyplot as plt
 import numpy as np
+from pypulseq import Sequence
 import torch
 
 
@@ -213,7 +230,22 @@ def epi_ghost_correction(
 
 
 def fft_reconstruct_image(kspace, use_gpu=False):
+    """
+    Reconstruct a magnitude image from 2-D Cartesian k-space via inverse FFT.
 
+    Assumes the DC component is at the centre of the array (standard convention).
+    Applies ``ifftshift`` before ``ifft2`` and ``fftshift`` after to place the image
+    origin at the array centre.
+
+    Args:
+        kspace: (NY, NX) array-like or torch.Tensor, complex k-space data.
+        use_gpu: Move computation to CUDA if available; falls back to CPU silently.
+
+    Returns:
+        Tuple of:
+            magnitude (np.ndarray): ``|image|``, shape (NY, NX), float.
+            image (np.ndarray): Complex image, shape (NY, NX), complex64.
+    """
     device = torch.device("cuda" if use_gpu and torch.cuda.is_available() else "cpu")
 
     if not isinstance(kspace, torch.Tensor):
@@ -232,3 +264,28 @@ def fft_reconstruct_image(kspace, use_gpu=False):
 
     magnitude = torch.abs(image)
     return magnitude.cpu().numpy(), image.cpu().numpy()
+
+
+def visualize_kspace_trajectory(seq: Sequence):
+    """Plot the continuous and ADC-sampled k-space trajectory for a sequence."""
+    # Trajectories (new API returns 5 values)
+    ktraj_adc, ktraj, _, _, t_adc = seq.calculate_kspace()
+
+    # Build a time axis for the continuous k-space (sampled on grad raster)
+    t_ktraj = np.arange(ktraj.shape[1]) * seq.grad_raster_time
+
+    plt.figure()
+    plt.plot(t_ktraj, ktraj.T)  # full k-space vs time (kx, ky, kz)
+    plt.plot(t_adc, ktraj_adc[0, :], ".")  # ADC-sampled kx vs t
+    plt.title("Full k-space vs time")
+    plt.xlabel("t (s)")
+
+    plt.figure()
+    plt.plot(ktraj[0, :], ktraj[1, :], "b")  # continuous trajectory (2D view)
+    plt.axis("equal")
+    plt.plot(ktraj_adc[0, :], ktraj_adc[1, :], "r.")  # ADC samples
+    plt.title("k-space (2D)")
+    plt.xlabel("kx")
+    plt.ylabel("ky")
+
+    plt.show()
