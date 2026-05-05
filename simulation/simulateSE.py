@@ -100,7 +100,7 @@ phantom_data = phantom.build()  # Build phantom with specified voxel size (in mm
 # %% ==============================================================================
 #   Load sequence
 # =================================================================================
-SEQUENCE_IDX = 1  # Select sequence index
+SEQUENCE_IDX = 0  # Select sequence index
 
 seq_files = [f for f in os.listdir(SEQUENCES_DIR_PATH) if f.endswith(".seq")]
 sequences = [
@@ -119,7 +119,9 @@ sequence_path = os.path.join(SEQUENCES_DIR_PATH, sequences[SEQUENCE_IDX])
 # sequence_path = r"C:\Users\User\OneDrive\PhD\_CODE\IQ-BRAIN_DC3_research\src\sequences\files\Diffusion-SE_v14_safe_fov224mm_96x96x1_TR5000ms_dw4.0us_TE121ms_b1000_dirs1_b0s1_rf-spoiler_delta20.00ms_DELTA40.00ms.seq"
 seq0 = mr0.Sequence.import_file(sequence_path)
 seq = Sequence()
-seq.read(sequence_path)
+
+# IMPORTANT! 
+# The read-in Pulseq sequence needs to be in v15 in order to use the new calculate_kspace() API
 print(
     f"Loaded sequence {os.path.split(sequence_path)[-1]}"
 )  # with {len(seq0.blocks)} blocks.")
@@ -130,12 +132,11 @@ AdcNumSamples = int(seq.definitions.get("AdcNumSamples"))
 N_navigator_lines = int(seq.definitions.get("NNavigatorLines"))
 PFF = seq.definitions.get("PartialFourierFactor")
 BVAL = seq.definitions.get("bValue")
-
+N_directions_raw = seq.definitions.get("DiffusionDirections")
 NY_acq = int(NY * PFF)
 fov = float(seq.definitions.get("FOV")[0])  # in-plane FOV in metres
 
 
-N_directions_raw = seq.definitions.get("DiffusionDirections")
 if isinstance(N_directions_raw, str):
     # Example input: "[0, 0, 0] [1, 0, 0] [0, 0, 0] [0, 1, 0] [0, 0, 0] [0, 0, 1]"
     groups = re.findall(r"\[[^\[\]]*\]", N_directions_raw)
@@ -224,18 +225,25 @@ if not MULTI_ECHO:
 calib_np = (
     calib_signal.numpy() if hasattr(calib_signal, "numpy") else np.asarray(calib_signal)
 )
+gc_dir_signal = np.zeros_like(dir_signal)
 for i in range(N_directions):
-    dir_signal[i] = epi_ghost_correction(calib_np, dir_signal[i])
+    gc_dir_signal[i] = epi_ghost_correction(calib_np, dir_signal[i])
 
 
 # %% ==============================================================================
 #   FFT reconstruction
 # =================================================================================
 for i in range(N_directions):
+    plt.subplots(1, 2, figsize=(10, 4))
     mag, image = fft_reconstruct_image(dir_signal[i], use_gpu=use_GPU)
-    plt.figure()
+    gc_mag, gc_image = fft_reconstruct_image(gc_dir_signal[i], use_gpu=use_GPU)
+    plt.subplot(1, 2, 1)
     plt.imshow(np.abs(image), cmap="gray")
     plt.title(f"Reconstructed image for direction {i+1}")
+    plt.axis("off")
+    plt.subplot(1, 2, 2)
+    plt.imshow(np.abs(gc_image), cmap="gray")
+    plt.title(f"Ghost-corrected image for direction {i+1}")
     plt.axis("off")
 
 
@@ -284,16 +292,16 @@ from mrinufft import get_operator
 
 img_size = (NY, NX)  # your Cartesian reconstruction grid size
 
-# Build one NUFFT operator shared across all directions (same EPI k-space trajectory)
-nufft_op = get_operator(
-    backend_name="cufinufft" if False else "finufft",
-    samples=aligned_trajectories[0],
-    shape=img_size,
-    n_coils=1,
-    density=True,
-)
 
 for i in range(N_directions):
+    # Build one NUFFT operator shared across all directions (same EPI k-space trajectory)
+    nufft_op = get_operator(
+        backend_name="cufinufft" if False else "finufft",
+        samples=direction_trajectories[i],
+        shape=img_size,
+        n_coils=1,
+        density=True,
+    )
     sig = dir_signal[i]
     sig = torch.from_numpy(sig).to(torch.complex64)  # Convert to PyTorch tensor
     print(f"Signal shape for direction {i+1}: {sig.shape}, dtype: {sig.dtype}")
@@ -321,4 +329,29 @@ for i in range(N_directions):
     plt.tight_layout()
     plt.show()
 
+# %%
+def visualize_kspace_trajectory(seq: Sequence):
+    """Plot the continuous and ADC-sampled k-space trajectory for a sequence."""
+    # Trajectories (new API returns 5 values)
+    ktraj_adc, ktraj, _, _, t_adc = seq.calculate_kspace()
+
+    # Build a time axis for the continuous k-space (sampled on grad raster)
+    t_ktraj = np.arange(ktraj.shape[1]) * seq.grad_raster_time
+
+    plt.figure()
+    plt.plot(t_ktraj, ktraj.T)  # full k-space vs time (kx, ky, kz)
+    plt.plot(t_adc, ktraj_adc[0, :], ".")  # ADC-sampled kx vs t
+    plt.title("Full k-space vs time")
+    plt.xlabel("t (s)")
+
+    plt.figure()
+    plt.plot(ktraj[0, :], ktraj[1, :], "b")  # continuous trajectory (2D view)
+    plt.axis("equal")
+    plt.plot(ktraj_adc[0, :], ktraj_adc[1, :], "r.")  # ADC samples
+    plt.title("k-space (2D)")
+    plt.xlabel("kx")
+    plt.ylabel("ky")
+
+    plt.show()
+visualize_kspace_trajectory(seq, )
 # %%

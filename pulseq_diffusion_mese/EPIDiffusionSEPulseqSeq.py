@@ -1124,7 +1124,8 @@ class EPIDiffusionSEPulseqSeq(PulseqSeq):
         self.seq.set_definition("AdcDwellTime", self.adc.dwell)
         self.seq.set_definition("AccelerationFactor", self.epi_acceleration_factor)
         self.seq.set_definition("PartialFourierFactor", self.partial_fourier_factor)
-
+        self.seq.set_definition("Nx", self.Nx)
+        self.seq.set_definition("Ny", self.Ny)
         self.logger.info(f"Writing sequence to file: {filename}")
 
         if os.path.exists(filename):
@@ -1247,7 +1248,7 @@ if __name__ == "__main__":
         small_delta=0.018,
         big_DELTA=0.035,
         acceleration_factor=1,
-        v141_compat=True,
+        v141_compat=False,
         fit_epi=False,
         labeled=True,
         blip_down=False,
