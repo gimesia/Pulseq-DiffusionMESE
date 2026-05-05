@@ -48,8 +48,7 @@ def stejskal_tanner(b, s0, adc):
 # ---------------------------------------------------------------------------
 # Per-voxel fitters
 # ---------------------------------------------------------------------------
-def _fit_adc_nlls(data, b_values, threshold_frac=0.1,
-                  adc_init=1e-3, adc_max=5e-3):
+def _fit_adc_nlls(data, b_values, threshold_frac=0.1, adc_init=1e-3, adc_max=5e-3):
     """Per-pixel non-linear least squares fit of S(b) = S0 * exp(-b * ADC).
 
     Parameters
@@ -153,7 +152,7 @@ def _fit_adc_loglinear(data, b_values, threshold_frac=0.1):
     # Stack into (n_b, 2) and solve once for all voxels using lstsq on the
     # flattened (n_b, n_voxels) matrix.
     X = np.column_stack([np.ones_like(b_arr), -b_arr])  # (n_b, 2)
-    Y = log_S.reshape(n_b, -1)                          # (n_b, ny*nx)
+    Y = log_S.reshape(n_b, -1)  # (n_b, ny*nx)
 
     # lstsq returns coeffs of shape (2, n_voxels): [ln(S0); ADC].
     coeffs, *_ = np.linalg.lstsq(X, Y, rcond=None)
@@ -202,9 +201,7 @@ def create_adc_map(data, b_values, method="nlls", **kwargs):
     """
     data = np.asarray(data)
     if data.ndim != 3:
-        raise ValueError(
-            f"`data` must be (n_b, ny, nx); got shape {data.shape}"
-        )
+        raise ValueError(f"`data` must be (n_b, ny, nx); got shape {data.shape}")
     if len(b_values) != data.shape[0]:
         raise ValueError(
             f"len(b_values)={len(b_values)} does not match data.shape[0]={data.shape[0]}"
@@ -216,6 +213,4 @@ def create_adc_map(data, b_values, method="nlls", **kwargs):
     elif method == "loglinear":
         return _fit_adc_loglinear(data, b_values, **kwargs)
     else:
-        raise ValueError(
-            f"Unknown method '{method}'. Use 'nlls' or 'loglinear'."
-        )
+        raise ValueError(f"Unknown method '{method}'. Use 'nlls' or 'loglinear'.")

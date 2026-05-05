@@ -13,6 +13,7 @@ Funding acknowledgement (mandatory):
     IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
     December 2024–November 2028, Grant Agreement No. 101169519).
 """
+
 from typing import Any, Literal, Literal, Tuple, Union
 
 from matplotlib import pyplot as plt

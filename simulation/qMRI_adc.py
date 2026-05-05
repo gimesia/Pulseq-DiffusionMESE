@@ -6,7 +6,7 @@ import numpy as np
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
 # such as using environment variables or a configuration file.
-seq_path = r'C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese'
+seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
@@ -120,9 +120,9 @@ for b_value in b_values:
         Ny=Ny,
         fov=fov,
         slice_thickness=slice_thickness,
-        TE=TE,                # fixed across the series
+        TE=TE,  # fixed across the series
         TR=TR,
-        b_value=b_value,      # the swept variable
+        b_value=b_value,  # the swept variable
         b_directions=3,
         b_0_frequency=3,
         save_dir=SEQUENCES_DIR_PATH,
@@ -260,7 +260,9 @@ for dir_idx, dir in enumerate(seq.b_directions):
     plt.tight_layout()
     plt.show()
 
-reconstructed_images = np.array(reconstructed_images)  # shape: (n_b, n_directions, Ny, Nx)
+reconstructed_images = np.array(
+    reconstructed_images
+)  # shape: (n_b, n_directions, Ny, Nx)
 print(f"Reconstructed images array shape: {reconstructed_images.shape}")
 
 # Magnitude images for ADC fitting (n_b, n_directions, Ny, Nx)
@@ -355,6 +357,7 @@ plt.imshow(np.rot90(adc_result, -1) * 1e3, cmap="viridis", vmin=0, vmax=3.5)
 plt.colorbar(label="ADC (x10⁻³ mm²/s)")
 plt.title("NLLS Quantitative ADC Map")
 plt.show()
+
 
 # %% ==============================================================================
 #   ADC fitting helper - same shape as the second T2 cell, with QC notes

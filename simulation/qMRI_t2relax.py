@@ -6,7 +6,7 @@ import numpy as np
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
 # such as using environment variables or a configuration file.
-seq_path = r'C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese'
+seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
@@ -42,7 +42,7 @@ PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
 # =================================================================================
 fov = 224e-3
 res = 2.33333333
-slice_thickness = res*1e-3
+slice_thickness = res * 1e-3
 TEs = np.arange(65, 255, 5)  # From 70 to 410 with a step of 5
 TR = 5000
 b_value = 1000
@@ -171,7 +171,7 @@ for te in TEs:
     except Exception:
         pass
     torch.cuda.empty_cache()
-    
+
     # ==============================================================================
     # Separate K-spaces
     # =================================================================================
@@ -185,7 +185,9 @@ for te in TEs:
         start_idx = i * samples_per_dir
         end_idx = (i + 1) * samples_per_dir
         dir_signal.append(
-            epi_signal[start_idx:end_idx,].reshape((int(seq.Ny * seq.partial_fourier_factor), seq.adc.num_samples))
+            epi_signal[start_idx:end_idx,].reshape(
+                (int(seq.Ny * seq.partial_fourier_factor), seq.adc.num_samples)
+            )
         )
     dir_signal = np.array(dir_signal)
 
@@ -227,7 +229,6 @@ for te in TEs:
 
     trajectories.append(direction_trajectories)
 
-
     # =================================================================================
     # Non-uniform FFT reconstruction (NUFFT) - for the ramp sampling pattern in the EPI readout
     # =================================================================================
@@ -258,11 +259,13 @@ for te in TEs:
 print("Sequence generation complete.")
 # %%
 for dir_idx, dir in enumerate(seq.b_directions):
-    rows = int(len(TEs)/5) if len(TEs) % 5 == 0 else int(len(TEs)/5) + 1
-    
-    fig, axs = plt.subplots(rows, 5, figsize=(15, 3*rows))
+    rows = int(len(TEs) / 5) if len(TEs) % 5 == 0 else int(len(TEs) / 5) + 1
+
+    fig, axs = plt.subplots(rows, 5, figsize=(15, 3 * rows))
     axs = axs.flatten()
-    fig.suptitle(f"Reconstructed images (dir {seq.b_directions[dir_idx]})")  # Add a title for the entire figure
+    fig.suptitle(
+        f"Reconstructed images (dir {seq.b_directions[dir_idx]})"
+    )  # Add a title for the entire figure
     for i, recon in enumerate(reconstructed_images):
         b0 = np.rot90(recon[dir_idx], -1)
         axs[i].imshow(np.abs(b0), cmap="gray")
@@ -271,17 +274,23 @@ for dir_idx, dir in enumerate(seq.b_directions):
     plt.tight_layout()  # Adjust layout to make room for the suptitle
     plt.show()
 
-reconstructed_images = np.array(reconstructed_images)  # shape: (n_TEs, n_directions, Ny, Nx)
+reconstructed_images = np.array(
+    reconstructed_images
+)  # shape: (n_TEs, n_directions, Ny, Nx)
 print(f"Reconstructed images array shape: {reconstructed_images.shape}")
 reconstructed_b0_images = reconstructed_images[:, 0, :, :]  # shape: (n_TEs, Ny, Nx)
 print(f"Extracted b0 images shape: {reconstructed_b0_images.shape}")
-reconstructed_b0_magnitude_images = np.abs(reconstructed_b0_images)  # Take magnitude for T2 fitting
+reconstructed_b0_magnitude_images = np.abs(
+    reconstructed_b0_images
+)  # Take magnitude for T2 fitting
 
 # %%
 from scipy.optimize import curve_fit
 
+
 def mono_exponential(te, s0, t2):
     return s0 * np.exp(-te / t2)
+
 
 def create_t2_map_scipy(data, te_list):
     """
@@ -298,54 +307,58 @@ def create_t2_map_scipy(data, te_list):
     for y in range(ny):
         for x in range(nx):
             pixel_series = data[:, y, x]
-            
+
             # Only fit if signal is above noise floor
             if pixel_series[0] > threshold:
                 try:
                     # Initial guesses are crucial for NLLS:
                     # s0_guess = first echo, t2_guess = 50ms
                     popt, _ = curve_fit(
-                        mono_exponential, 
-                        te_list, 
-                        pixel_series, 
+                        mono_exponential,
+                        te_list,
+                        pixel_series,
                         p0=[pixel_series[0], 50],
-                        bounds=(0, [np.inf, 1600]) # Constrain T2 to realistic values
+                        bounds=(0, [np.inf, 1600]),  # Constrain T2 to realistic values
                     )
                     s0_map[y, x], t2_map[y, x] = popt
                 except:
                     # If the fit fails (e.g. non-convergent), leave as 0
                     continue
-                    
+
     return t2_map, s0_map
 
 
 # Assuming 't2_result' is your 96x96 map
 t2_result, s0_result = create_t2_map_scipy(reconstructed_b0_magnitude_images, TEs)
-plt.imshow(np.rot90(t2_result, -1), cmap='viridis',)
-plt.colorbar(label='T2 (ms)')
-plt.title('Quantitative T2 Map')
+plt.imshow(
+    np.rot90(t2_result, -1),
+    cmap="viridis",
+)
+plt.colorbar(label="T2 (ms)")
+plt.title("Quantitative T2 Map")
+
 
 # %%
 def mono_exponential(te, s0, t2):
     return s0 * np.exp(-te / t2)
- 
- 
+
+
 def create_t2_map_scipy(data, te_list):
     n_te, ny, nx = data.shape
     t2_map = np.zeros((ny, nx))
     s0_map = np.zeros((ny, nx))
- 
+
     # Background mask: skip pixels whose first-echo signal is below
     # this fraction of the global maximum. NB: 0.5 is aggressive -
     # see the docstring's "Threshold" note.
     threshold = np.max(data) * 0.5
- 
+
     # Per-pixel fit. The outer loops are over image rows/columns;
     # the inner curve_fit fits one decay curve at a time.
     for y in range(ny):
         for x in range(nx):
             pixel_series = data[:, y, x]
- 
+
             # Reject background / low-SNR voxels using the first-echo
             # intensity as a proxy for tissue signal.
             if pixel_series[0] > threshold:
@@ -367,27 +380,31 @@ def create_t2_map_scipy(data, te_list):
                     # Non-convergent fit - leave this voxel as 0.
                     # Consider logging or counting these for QC.
                     continue
- 
+
     return t2_map, s0_map
+
 
 # Assuming 't2_result' is your 96x96 map
 t2_result, s0_result = create_t2_map_scipy(reconstructed_b0_magnitude_images, TEs)
-plt.imshow(np.rot90(t2_result, -1), cmap='viridis',)
-plt.colorbar(label='T2 (ms)')
-plt.title('Quantitative T2 Map')
+plt.imshow(
+    np.rot90(t2_result, -1),
+    cmap="viridis",
+)
+plt.colorbar(label="T2 (ms)")
+plt.title("Quantitative T2 Map")
 
 # %%
 from utils_relaxometry import create_t2_map
 
 ims = []
-for i in ['nlls', 'loglinear']:
+for i in ["nlls", "loglinear"]:
     t2_result = create_t2_map(reconstructed_b0_magnitude_images, TEs, method=i)
     ims.append(t2_result[0])
 
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
-titles = ['NLLS Fit', 'Log-Linear Fit']
+titles = ["NLLS Fit", "Log-Linear Fit"]
 for i, ax in enumerate(axs):
-    im = ax.imshow(np.rot90(ims[i], -1), cmap='viridis')
+    im = ax.imshow(np.rot90(ims[i], -1), cmap="viridis")
     ax.set_title(titles[i])
-    fig.colorbar(im, ax=ax, label='T2 (ms)')
+    fig.colorbar(im, ax=ax, label="T2 (ms)")
 # %%

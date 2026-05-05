@@ -39,6 +39,7 @@ from scipy.optimize import curve_fit
 # Forward model
 # ---------------------------------------------------------------------------
 
+
 def mono_exponential(te, s0, t2):
     """
     Mono-exponential T2 decay model: S(TE) = s0 * exp(-te / t2).
@@ -71,6 +72,7 @@ def mono_exponential(te, s0, t2):
 # Masking helper
 # ---------------------------------------------------------------------------
 
+
 def _build_mask(data, mask_threshold_frac):
     """
     Build a boolean foreground mask from the first-echo image.
@@ -100,6 +102,7 @@ def _build_mask(data, mask_threshold_frac):
 # ---------------------------------------------------------------------------
 # Log-linear estimator (vectorised)
 # ---------------------------------------------------------------------------
+
 
 def t2_loglinear(data, te_list, mask_threshold_frac=0.15, eps=1e-12):
     """
@@ -161,12 +164,12 @@ def t2_loglinear(data, te_list, mask_threshold_frac=0.15, eps=1e-12):
     # log(S) for every voxel and every echo. The eps floor prevents
     # -inf at zero-signal voxels; we will discard those via the mask
     # anyway, but the lstsq below still needs finite inputs.
-    log_s = np.log(np.maximum(data, eps))            # (n_te, ny, nx)
-    flat = log_s.reshape(n_te, -1)                   # (n_te, ny*nx)
+    log_s = np.log(np.maximum(data, eps))  # (n_te, ny, nx)
+    flat = log_s.reshape(n_te, -1)  # (n_te, ny*nx)
 
     # Design matrix: columns are [TE, 1]. The slope solves for
     # -1/T2 and the intercept for log(S0).
-    A = np.column_stack([te, np.ones_like(te)])      # (n_te, 2)
+    A = np.column_stack([te, np.ones_like(te)])  # (n_te, 2)
 
     # One least-squares solve over all pixels simultaneously.
     coeffs, *_ = np.linalg.lstsq(A, flat, rcond=None)  # (2, ny*nx)
@@ -187,6 +190,7 @@ def t2_loglinear(data, te_list, mask_threshold_frac=0.15, eps=1e-12):
 # ---------------------------------------------------------------------------
 # Non-linear refinement
 # ---------------------------------------------------------------------------
+
 
 def t2_nlls(
     data,
@@ -305,6 +309,7 @@ def t2_nlls(
 # Convenience wrapper
 # ---------------------------------------------------------------------------
 
+
 def create_t2_map(data, te_list, method="nlls", **kwargs):
     """
     Top-level entry point for T2 mapping.
@@ -340,20 +345,18 @@ def create_t2_map(data, te_list, method="nlls", **kwargs):
     elif method == "nlls":
         return t2_nlls(data, te_list, **kwargs)
     else:
-        raise ValueError(
-            f"Unknown method {method!r}. Choose 'loglinear' or 'nlls'."
-        )
-        
+        raise ValueError(f"Unknown method {method!r}. Choose 'loglinear' or 'nlls'.")
+
 
 def _compare_estimators(noise_levels=(0.0, 1.0, 5.0, 20.0), seed=0):
     """
     Generate a small synthetic phantom with three known-T2 regions and
     compare `t2_loglinear` vs. `t2_nlls` across noise levels.
- 
+
     Prints a per-region accuracy / precision table. This exists mainly
     to give a quick gut check that the estimators are wired up
     correctly and to illustrate the noise-bias gap between them.
- 
+
     Parameters
     ----------
     noise_levels : iterable of float
@@ -365,46 +368,46 @@ def _compare_estimators(noise_levels=(0.0, 1.0, 5.0, 20.0), seed=0):
         reproducible.
     """
     rng = np.random.default_rng(seed)
- 
+
     # Three-region phantom. The bottom-right quadrant is region D and
     # gets the long T2 = 120 ms - it overlaps with B because we set
     # the long-T2 column after the short-T2 row.
     TEs = np.arange(20, 260, 10)
     ny, nx = 32, 32
     true_t2 = np.full((ny, nx), 80.0)
-    true_t2[:16, :] = 40.0    # top half:    short T2
-    true_t2[:, 16:] = 120.0   # right half:  long T2 (overrides top-right)
+    true_t2[:16, :] = 40.0  # top half:    short T2
+    true_t2[:, 16:] = 120.0  # right half:  long T2 (overrides top-right)
     true_s0 = np.full((ny, nx), 1000.0)
- 
+
     # Define ROIs as the three non-overlapping quadrants where each
     # T2 is the dominant value. Region B is top-right (long T2),
     # region A is top-left (short), region C is bottom-left (mid).
     rois = {
-        "A (true 40 ms)":  (slice(0, 16),  slice(0, 16)),
-        "B (true 120 ms)": (slice(0, 16),  slice(16, 32)),
-        "C (true 80 ms)":  (slice(16, 32), slice(0, 16)),
+        "A (true 40 ms)": (slice(0, 16), slice(0, 16)),
+        "B (true 120 ms)": (slice(0, 16), slice(16, 32)),
+        "C (true 80 ms)": (slice(16, 32), slice(0, 16)),
     }
     truth = {"A (true 40 ms)": 40.0, "B (true 120 ms)": 120.0, "C (true 80 ms)": 80.0}
- 
+
     # Noise-free signal stack, shape (n_te, ny, nx)
     clean = true_s0[None] * np.exp(-TEs[:, None, None] / true_t2[None])
- 
+
     header = f"{'noise sigma':>12} | {'method':>10} | {'region':<18} | {'mean':>7} | {'std':>6} | {'bias':>7}"
     print(header)
     print("-" * len(header))
- 
+
     for sigma in noise_levels:
         if sigma > 0:
             noise = rng.standard_normal(clean.shape) * sigma
             data = np.abs(clean + noise)
         else:
             data = clean.copy()
- 
-        t2_ll, _ = create_t2_map(data, TEs, method="loglinear",
-                                  mask_threshold_frac=0.05)
-        t2_nl, _ = create_t2_map(data, TEs, method="nlls",
-                                  mask_threshold_frac=0.05)
- 
+
+        t2_ll, _ = create_t2_map(
+            data, TEs, method="loglinear", mask_threshold_frac=0.05
+        )
+        t2_nl, _ = create_t2_map(data, TEs, method="nlls", mask_threshold_frac=0.05)
+
         for label, sl in rois.items():
             true_val = truth[label]
             for method_name, t2_map in [("loglinear", t2_ll), ("nlls", t2_nl)]:
@@ -417,10 +420,12 @@ def _compare_estimators(noise_levels=(0.0, 1.0, 5.0, 20.0), seed=0):
                     mean = valid.mean()
                     std = valid.std()
                     bias = mean - true_val
-                print(f"{sigma:>12.1f} | {method_name:>10} | {label:<18} | "
-                      f"{mean:>7.2f} | {std:>6.2f} | {bias:>+7.2f}")
+                print(
+                    f"{sigma:>12.1f} | {method_name:>10} | {label:<18} | "
+                    f"{mean:>7.2f} | {std:>6.2f} | {bias:>+7.2f}"
+                )
         print()
- 
- 
+
+
 if __name__ == "__main__":
     _compare_estimators()

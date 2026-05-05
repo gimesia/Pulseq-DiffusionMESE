@@ -52,7 +52,7 @@ PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
 # %% ==============================================================================
 #   Simulation parameters
 # =================================================================================
-NX = NY = 96 
+NX = NY = 96
 N_ECHOES = 3  # triple spin-echo
 
 use_GPU = torch.cuda.is_available()
@@ -124,7 +124,7 @@ sequence_path = os.path.join(SEQUENCES_DIR_PATH, sequences[SEQUENCE_IDX])
 seq0 = mr0.Sequence.import_file(sequence_path)
 seq = Sequence()
 
-# IMPORTANT! 
+# IMPORTANT!
 # The read-in Pulseq sequence needs to be in v15 in order to use the new calculate_kspace() API
 seq.read(sequence_path.replace("v14", "v15"))
 print(f"Loaded sequence {os.path.split(sequence_path)[-1]}")

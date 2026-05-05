@@ -139,7 +139,7 @@ sequence_path = os.path.join(SEQUENCES_DIR_PATH, sequences[SEQUENCE_IDX])
 seq0 = mr0.Sequence.import_file(sequence_path)
 seq = Sequence()
 
-# IMPORTANT! 
+# IMPORTANT!
 # The read-in Pulseq sequence needs to be in v15 in order to use the new calculate_kspace() API
 seq.read(sequence_path.replace("v14", "v15"))
 print(f"Loaded sequence {os.path.split(sequence_path)[-1]}")
@@ -342,5 +342,7 @@ for i in range(N_directions):
 
 # %%
 
-visualize_kspace_trajectory(seq, )
+visualize_kspace_trajectory(
+    seq,
+)
 # %%
