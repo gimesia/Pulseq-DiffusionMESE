@@ -327,103 +327,10 @@ plt.title('Quantitative T2 Map')
 
 # %%
 def mono_exponential(te, s0, t2):
-    """
-    Mono-exponential T2 decay model.
- 
-    Parameters
-    ----------
-    te : array_like
-        Echo time(s) in milliseconds. Can be a scalar or 1D array.
-    s0 : float
-        Signal intensity extrapolated to TE = 0. Carries PD, T1,
-        receive-coil, and sequence-scaling factors.
-    t2 : float
-        Transverse relaxation time in milliseconds.
- 
-    Returns
-    -------
-    ndarray or float
-        Predicted signal magnitude S(TE) = s0 * exp(-te / t2).
- 
-    Notes
-    -----
-    Units of `te` and `t2` must match (both ms here). The model is
-    only valid for magnitude data above the noise floor; near the
-    noise floor, magnitude images follow a Rician distribution that
-    biases the fit toward longer T2.
-    """
     return s0 * np.exp(-te / t2)
  
  
 def create_t2_map_scipy(data, te_list):
-    """
-    Compute a per-pixel T2 map by non-linear least-squares fitting.
- 
-    For each pixel above a (global) intensity threshold, this fits the
-    mono-exponential model in `mono_exponential` to the signal-vs-TE
-    curve using `scipy.optimize.curve_fit` (Levenberg–Marquardt with
-    bound constraints, falls back to trust-region when bounds are set).
- 
-    Parameters
-    ----------
-    data : ndarray, shape (n_te, ny, nx)
-        Stack of magnitude images, one per echo time. Axis 0 indexes
-        TE, axes 1 and 2 are spatial. Must be real-valued; pass
-        `np.abs(complex_data)` if your reconstruction is complex.
-    te_list : array_like, shape (n_te,)
-        Echo times in milliseconds, in the same order as `data`'s
-        first axis.
- 
-    Returns
-    -------
-    t2_map : ndarray, shape (ny, nx)
-        Per-pixel T2 estimate in milliseconds. Pixels below the
-        intensity threshold or where the fit failed are set to 0.
-    s0_map : ndarray, shape (ny, nx)
-        Per-pixel S0 estimate (signal extrapolated to TE = 0), in the
-        same arbitrary intensity units as `data`. Useful as a QC image:
-        it should resemble a PD-weighted scan with no TE-dependent
-        contrast.
- 
-    Notes
-    -----
-    Threshold
-        The background mask is built from a global threshold,
-        `0.5 * data.max()`. This is aggressive: the global maximum is
-        usually a bright CSF voxel at the shortest TE, so 50% of that
-        excludes much of the parenchyma. For brain data, a more
-        permissive threshold based on the first-echo image
-        (e.g. `0.05 * data[0].max()`) typically gives much better
-        coverage.
- 
-    Initial guesses
-        - S0 is initialised to the first-echo intensity of the pixel.
-        - T2 is initialised to 50 ms (a reasonable WM-ish value).
-        Both are required because curve_fit's default Jacobian-free
-        starting point would otherwise be (1, 1), which converges
-        poorly for relaxometry.
- 
-    Bounds
-        T2 is constrained to (0, 1600] ms. This rejects unphysical
-        negative values and clips runaway fits in noisy CSF voxels.
-        At 3T in vivo, CSF T2 can approach ~2000 ms; raise the upper
-        bound if that matters for your phantom.
- 
-    Failure handling
-        Any exception during a per-pixel fit (non-convergence, bad
-        bounds, etc.) leaves that pixel at 0 in both output maps.
-        The bare `except` is broad - tighten to
-        `except (RuntimeError, ValueError):` if you need to surface
-        unrelated bugs.
- 
-    Performance
-        This is a Python-level pixel loop with one curve_fit call per
-        voxel. For a 96x96 image (~9k pixels) it runs in seconds; for
-        full-resolution brain volumes it gets slow. A vectorised
-        log-linear fit (`np.linalg.lstsq` on `log(S)` vs TE across all
-        pixels at once) is dramatically faster and provides good
-        initial guesses for an optional NLLS refinement pass.
-    """
     n_te, ny, nx = data.shape
     t2_map = np.zeros((ny, nx))
     s0_map = np.zeros((ny, nx))

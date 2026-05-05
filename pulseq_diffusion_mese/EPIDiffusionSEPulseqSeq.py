@@ -86,9 +86,7 @@ class EPIDiffusionSEPulseqSeq(PulseqSeq):
         rephasers: bool = False,
         simultan_rephasers: bool = True,
         blip_down: bool = True,
-        ramp_sampling: str = "none",  # 'none', 'optimized', 'ramp_sampled'
-        eddy_currents: bool = False,
-        eddy_currents_induced_delay: float = 0.0000015,
+        ramp_sampling: str = "ramp_sampled",  # only 'ramp_sampled'
         save_dir: str = DEFAULT_SAVE_DIR,
         logger: logging.Logger = None,
         partial_fourier_factor: float = 1.0,
@@ -1116,7 +1114,7 @@ class EPIDiffusionSEPulseqSeq(PulseqSeq):
         self.seq.set_definition("SliceThickness", self.slice_thickness)
         self.seq.set_definition("NNavigatorLines", 3)
         self.seq.set_definition("DiffusionDirections", self.b_directions.tolist())
-        self.seq.set_definition("bValue", self.b_value)
+        self.seq.set_definition("bValue", int(self.b_value))
         self.seq.set_definition("b0Frequency", self.b_0_frequency)
         self.seq.set_definition("SmallDelta", self.small_delta)
         self.seq.set_definition("BigDelta", self.big_DELTA)

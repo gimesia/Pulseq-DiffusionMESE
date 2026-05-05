@@ -1360,7 +1360,7 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         """Write the sequence to a Pulseq ``.seq`` file with embedded metadata.
 
         Embeds FOV, echo times, TR, slice thickness, diffusion directions, b-value,
-        and Stejskal–Tanner timing in the file header so that the scanner and
+        and Stejskal-Tanner timing in the file header so that the scanner and
         offline tools can parse them without a separate sidecar.
 
         Args:
@@ -1995,30 +1995,37 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         )
 
         # Add vertical lines for TEs
-        import matplotlib.pyplot as plt
-
         fig = plt.gcf()
-        te_times = [self.TE, self.TE2, self.TE3]
-        te_labels = ["TE1", "TE2", "TE3"]
-        for te_time, te_label in zip(te_times, te_labels):
+        
+        
+        # Get TE times for all directions
+        te_times = []
+        te_labels = []
+        
+        te_times_tr = [self.TE, self.TE2, self.TE3]
+        te_labels_tr = ["TE1", "TE2", "TE3"]
+        for n in range(self.b_directions.shape[0]):
+            te_times.extend([t + n * self.TR for t in te_times_tr])
+        
+        for idx, te_time in enumerate(te_times):
             for ax in fig.axes:
+                idx_mod = idx % len(te_labels_tr)
                 ax.axvline(
                     x=te_time,
                     color="red",
                     linestyle="--",
                     linewidth=1,
                     alpha=0.7,
-                    label=te_label,
+                    label=te_labels_tr[idx_mod],
                 )
 
-        plt.legend()
         if save:
             plt.savefig(
                 os.path.join(self.save_dir, f"{self.name}_sequence_diagram.png"),
-                dpi=150,
+                dpi=500,
                 bbox_inches="tight",
             )
-
+        plt.show()
 
 # %%
 if __name__ == "__main__":
@@ -2028,7 +2035,7 @@ if __name__ == "__main__":
     dwell = 5 * 0.000001
     
 for cp in [True, False]:
-        epi4 = EPIDiffusionTripleSEPulseqSeq(
+        mesepi = EPIDiffusionTripleSEPulseqSeq(
             name=f"DiffMESE",
             fov=224e-3,
             Nx=96,
@@ -2065,12 +2072,12 @@ for cp in [True, False]:
             blip_down=False,
             alternating_blip_polarity=False,
         )
-        # epi3.plot()
-        # epi4.print_spoiler_info()
-        epi4.plot_kspace_traj()
-        epi4.write()
-        epi4.report()
-        # plot_gradient_and_slew(epi4.seq)
-        epi4.validate_echo_timing()
+        # mesepi.print_spoiler_info()
+        mesepi.plot(time_range=(5, 5.2),)
+        # mesepi.plot_kspace_traj()
+        # mesepi.write()
+        # mesepi.report()
+        # plot_gradient_and_slew(mesepi.seq)
+        # mesepi.validate_echo_timing()
 
 # %%
