@@ -2034,52 +2034,52 @@ if __name__ == "__main__":
     res = 2.33333333333333333333333333333
     dwell = 5 * 0.000001
 
-for cp in [True, False]:
-    mesepi = EPIDiffusionTripleSEPulseqSeq(
-        name=f"DiffMESE",
-        fov=224e-3,
-        Nx=96,
-        Ny=96,
-        resolution=res,
-        slice_thickness=res * 1e-3,
-        partial_fourier_factor=0.75,
-        TR=5000,
-        TE=80,
-        rf90_duration=0.003,
-        rf180_duration=0.003,
-        dwell_time=dwell,
-        prephaser_duration=0.0005,
-        rephasers=True,
-        simultan_rephasers=False,
-        system_type=SystemLimitType.EXTREME,
-        rf180_spoiler=True,
-        ramp_sampling="ramp_sampled",
-        spoiler_amplitude=0.95,
-        b_0_frequency=3,
-        b_directions=3,
-        b_value=500,
-        small_delta=0.018,
-        big_DELTA=0.035,
-        acceleration_factor=1,
-        v141_compat=cp,
-        fit_epi=False,
-        calibration_readout=True,
-        adc_dead_time_correction=True,
-        uniform_spoiler_areas=True,
-        uniform_spoiler_directions=False,
-        phase_cycling=False,
-        labeled=True,
-        blip_down=False,
-        alternating_blip_polarity=False,
-    )
-    # mesepi.print_spoiler_info()
-    mesepi.plot(
-        time_range=(5, 5.2),
-    )
-    # mesepi.plot_kspace_traj()
-    # mesepi.write()
-    # mesepi.report()
-    # plot_gradient_and_slew(mesepi.seq)
-    # mesepi.validate_echo_timing()
+    for cp in [True, False]:
+        mesepi = EPIDiffusionTripleSEPulseqSeq(
+            name=f"DiffMESE",
+            fov=224e-3,
+            Nx=96,
+            Ny=96,
+            resolution=res,
+            slice_thickness=res * 1e-3,
+            partial_fourier_factor=0.75,
+            TR=5000,
+            TE=80,
+            rf90_duration=0.003,
+            rf180_duration=0.003,
+            dwell_time=dwell,
+            prephaser_duration=0.0005,
+            rephasers=True,
+            simultan_rephasers=False,
+            system_type=SystemLimitType.EXTREME,
+            rf180_spoiler=True,
+            ramp_sampling="ramp_sampled",
+            spoiler_amplitude=0.95,
+            b_0_frequency=3,
+            b_directions=3,
+            b_value=500,
+            small_delta=0.018,
+            big_DELTA=0.035,
+            acceleration_factor=1,
+            v141_compat=cp,
+            fit_epi=False,
+            calibration_readout=True,
+            adc_dead_time_correction=True,
+            uniform_spoiler_areas=True,
+            uniform_spoiler_directions=False,
+            phase_cycling=False,
+            labeled=True,
+            blip_down=False,
+            alternating_blip_polarity=False,
+        )
+        # mesepi.print_spoiler_info()
+        mesepi.plot(
+            time_range=(5, 5.2),
+        )
+        # mesepi.plot_kspace_traj()
+        # mesepi.write()
+        # mesepi.report()
+        # plot_gradient_and_slew(mesepi.seq)
+        # mesepi.validate_echo_timing()
 
-# %%
+    # %%
