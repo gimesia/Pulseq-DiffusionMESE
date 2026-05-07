@@ -43,9 +43,9 @@ PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
 fov = 224e-3
 res = 2.33333333
 slice_thickness = res * 1e-3
-TEs = np.arange(65, 255, 5)  # From 70 to 410 with a step of 5
+TEs = np.arange(65, 265, 5)  # From 70 to 410 with a step of 5
 TR = 5000
-b_value = 1000
+b_value = 00
 Nx = Ny = int(fov / slice_thickness)
 
 # %% ==============================================================================
@@ -57,7 +57,7 @@ NZ = 10
 SLICE_IDX = 4  # Select slice index
 
 add_tumor = True
-tumor_size = (10, 10, 10)  # size of the tumor in voxels (x, y, z)
+tumor_size = (20, 20, 20)  # size of the tumor in voxels (x, y, z)
 
 
 phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if f.endswith(".npz")]
@@ -68,15 +68,8 @@ phantom_path = os.path.join(PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX])
 if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
     phantom = mr0.VoxelGridPhantom.load(phantom_path)  # Load phantom
     print(f"Loaded phantom {os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}")
-    phantom = phantom.interpolate(Nx, Ny, NZ)  # Resize phantom, select slice
-    print(f"Resized phantom. Shape: {phantom.D.shape}")
 
-    phantom.voxel_size = torch.Tensor(
-        [0.00233, 0.00233, 0.00233]
-    )  # Set voxel size (in mm)
-
-    vox = phantom.voxel_size
-
+    # Optionally add a tumor to the phantom
     if add_tumor:
         # typical brain tumor ADC values are around ~1.5 * 10^-3 mm^2/s,
         # which lies between GM/WM and CSF (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3000221)
@@ -87,24 +80,24 @@ if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
             adc_tumor_core=1.5,
             adc_tumor_border=2.5,  # 'tl', 'bl', 'tr', 'br' or (cx, cy, cz)
         )
+    # Resize phantom, without padding
+    phantom = phantom.interpolate(Nx, Ny, NZ)
+    print(f"Resized phantom. Shape: {phantom.D.shape}")
 
+    # Select slice
     phantom = phantom.slices([SLICE_IDX])  # Resize phantom, select slice
     print(f"Selected slice. Shape: {phantom.D.shape}")
 
 else:
     raise FileNotFoundError(f"Error: Invalid phantom file at {phantom_path}")
 
-# Visualize and build phantom
-PD = phantom.PD
-T1 = phantom.T1
-T2 = phantom.T2
-D = phantom.D
-B0 = phantom.B0
-B1 = phantom.B1
-
-phantom.plot()  # Plot phantom
+# Build phantom
 phantom_data = phantom.build()  # Build phantom with specified voxel size (in mm)
 
+
+# %% ================================================================================
+#   Main simulation loop: Generate sequence, simulate signal, separate k-spaces, calculate trajectories, and reconstruct images
+# =================================================================================
 nu_kspaces = []
 trajectories = []
 reconstructed_images = []
@@ -132,6 +125,7 @@ for te in TEs:
         big_DELTA=0.03,
         system_type=SystemLimitType.EXTREME,
         calibration_readout=True,
+        blip_down=True,
     )
 
     # Generate and write the sequence to a file
@@ -285,126 +279,50 @@ reconstructed_b0_magnitude_images = np.abs(
 )  # Take magnitude for T2 fitting
 
 # %%
-from scipy.optimize import curve_fit
-
-
-def mono_exponential(te, s0, t2):
-    return s0 * np.exp(-te / t2)
-
-
-def create_t2_map_scipy(data, te_list):
-    """
-    data: (n_te, 96, 96) array
-    te_list: array of echo times
-    """
-    n_te, ny, nx = data.shape
-    t2_map = np.zeros((ny, nx))
-    s0_map = np.zeros((ny, nx))
-
-    # Threshold to ignore background noise (tweak 0.1 as needed)
-    threshold = np.max(data) * 0.1
-
-    for y in range(ny):
-        for x in range(nx):
-            pixel_series = data[:, y, x]
-
-            # Only fit if signal is above noise floor
-            if pixel_series[0] > threshold:
-                try:
-                    # Initial guesses are crucial for NLLS:
-                    # s0_guess = first echo, t2_guess = 50ms
-                    popt, _ = curve_fit(
-                        mono_exponential,
-                        te_list,
-                        pixel_series,
-                        p0=[pixel_series[0], 50],
-                        bounds=(0, [np.inf, 1600]),  # Constrain T2 to realistic values
-                    )
-                    s0_map[y, x], t2_map[y, x] = popt
-                except:
-                    # If the fit fails (e.g. non-convergent), leave as 0
-                    continue
-
-    return t2_map, s0_map
-
-
-# Assuming 't2_result' is your 96x96 map
-t2_result, s0_result = create_t2_map_scipy(reconstructed_b0_magnitude_images, TEs)
-plt.imshow(
-    np.rot90(t2_result, -1),
-    cmap="viridis",
-)
-plt.colorbar(label="T2 (ms)")
-plt.title("Quantitative T2 Map")
-
-
-# %%
-def mono_exponential(te, s0, t2):
-    return s0 * np.exp(-te / t2)
-
-
-def create_t2_map_scipy(data, te_list):
-    n_te, ny, nx = data.shape
-    t2_map = np.zeros((ny, nx))
-    s0_map = np.zeros((ny, nx))
-
-    # Background mask: skip pixels whose first-echo signal is below
-    # this fraction of the global maximum. NB: 0.5 is aggressive -
-    # see the docstring's "Threshold" note.
-    threshold = np.max(data) * 0.5
-
-    # Per-pixel fit. The outer loops are over image rows/columns;
-    # the inner curve_fit fits one decay curve at a time.
-    for y in range(ny):
-        for x in range(nx):
-            pixel_series = data[:, y, x]
-
-            # Reject background / low-SNR voxels using the first-echo
-            # intensity as a proxy for tissue signal.
-            if pixel_series[0] > threshold:
-                try:
-                    # p0: initial guess for [S0, T2]. Using the first
-                    #   echo as S0_guess is robust because S(TE_min)
-                    #   is the closest direct estimate of S0 we have.
-                    # bounds: keep both parameters non-negative and
-                    #   clip T2 to a physiologically plausible range.
-                    popt, _ = curve_fit(
-                        mono_exponential,
-                        te_list,
-                        pixel_series,
-                        p0=[pixel_series[0], 50],
-                        bounds=(0, [np.inf, 1600]),
-                    )
-                    s0_map[y, x], t2_map[y, x] = popt
-                except Exception:
-                    # Non-convergent fit - leave this voxel as 0.
-                    # Consider logging or counting these for QC.
-                    continue
-
-    return t2_map, s0_map
-
-
-# Assuming 't2_result' is your 96x96 map
-t2_result, s0_result = create_t2_map_scipy(reconstructed_b0_magnitude_images, TEs)
-plt.imshow(
-    np.rot90(t2_result, -1),
-    cmap="viridis",
-)
-plt.colorbar(label="T2 (ms)")
-plt.title("Quantitative T2 Map")
-
-# %%
 from utils_relaxometry import create_t2_map
 
 ims = []
 for i in ["nlls", "loglinear"]:
     t2_result = create_t2_map(reconstructed_b0_magnitude_images, TEs, method=i)
     ims.append(t2_result[0])
-
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
 titles = ["NLLS Fit", "Log-Linear Fit"]
+
 for i, ax in enumerate(axs):
-    im = ax.imshow(np.rot90(ims[i], -1), cmap="viridis")
+    im = ax.imshow(np.rot90(ims[i], -1 if i < 2 else 1), cmap="viridis")
     ax.set_title(titles[i])
     fig.colorbar(im, ax=ax, label="T2 (ms)")
+
+
+# %%
+ref = mr0.VoxelGridPhantom.load(rf"{PHANTOMS_DIR_PATH}\{phantoms[PHANTOM_IDX]}")
+max_dim = max(ref.D.shape)
+ref.D = pad_to_cube(ref.D, max_dim)
+ref.T2 = pad_to_cube(ref.T2, max_dim)
+ref.T2dash = pad_to_cube(ref.T2dash, max_dim)
+ref.T1 = pad_to_cube(ref.T1, max_dim)
+ref.PD = pad_to_cube(ref.PD, max_dim)
+ref.B0 = pad_to_cube(ref.B0, max_dim)
+ref.B1 = pad_to_cube(ref.B1, max_dim)
+
+ref = ref.interpolate(Nx, Ny, NZ).slices([SLICE_IDX])
+ref.plot()
+
+# %%
+
+fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+titles = ["NLLS Fit", "Log-Linear Fit", "T2 Map"]
+
+ims2 = [*ims, ref.T2]
+for i, ax in enumerate(axs):
+    if i < 2:
+        im = np.rot90(ims2[i], -1)
+        im = im / 1000
+    else:
+        im = np.rot90(ims2[i], 1)
+
+    im = ax.imshow(im, cmap="viridis", vmax=2)
+    ax.set_title(titles[i])
+    fig.colorbar(im, ax=ax, label="T2 (s)")
+
 # %%

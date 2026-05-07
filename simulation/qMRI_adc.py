@@ -3,6 +3,10 @@ import os
 import sys
 import numpy as np
 
+import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning, module="mrinufft")
+
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
 # such as using environment variables or a configuration file.
@@ -22,6 +26,8 @@ from EPIDiffusionSEPulseqSeq import EPIDiffusionSEPulseqSeq
 from utils import SystemLimitType
 from utils_simulation import *
 from mrinufft import get_operator
+import torch
+import torch.nn.functional as F
 
 np.int = int
 np.float = float
@@ -74,10 +80,7 @@ if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
     print(f"Loaded phantom {os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}")
     phantom = phantom.interpolate(Nx, Ny, NZ)  # Resize phantom, select slice
     print(f"Resized phantom. Shape: {phantom.D.shape}")
-    phantom.voxel_size = torch.Tensor(
-        [0.00233, 0.00233, 0.00233]
-    )  # Set voxel size (in mm)
-    vox = phantom.voxel_size
+
     if add_tumor:
         # typical brain tumor ADC values are around ~1.5 * 10^-3 mm^2/s,
         # which lies between GM/WM and CSF (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3000221)
@@ -123,8 +126,8 @@ for b_value in b_values:
         TE=TE,  # fixed across the series
         TR=TR,
         b_value=b_value,  # the swept variable
-        b_directions=3,
-        b_0_frequency=3,
+        b_directions=12,
+        b_0_frequency=12,
         save_dir=SEQUENCES_DIR_PATH,
         save_name=name,
         v141_compat=True,
@@ -279,145 +282,6 @@ log_dir = np.log(reconstructed_magnitude_images + eps)
 trace_dwi = np.exp(np.mean(log_dir, axis=1))  # shape: (n_b, Ny, Nx)
 print(f"Trace DWI array shape: {trace_dwi.shape}")
 
-# %% ==============================================================================
-#   ADC fitting (per-pixel NLLS, Stejskal-Tanner mono-exponential)
-# =================================================================================
-from scipy.optimize import curve_fit
-
-
-def stejskal_tanner(b, s0, adc):
-    """S(b) = S0 * exp(-b * ADC)
-
-    b   : b-value [s/mm^2]
-    s0  : signal at b=0 (proton-density / T2 weighted intensity at fixed TE)
-    adc : apparent diffusion coefficient [mm^2/s]
-    """
-    return s0 * np.exp(-b * adc)
-
-
-def create_adc_map_scipy(data, b_list):
-    """
-    data   : (n_b, ny, nx) magnitude trace-DWI stack
-    b_list : array of b-values [s/mm^2], same order as the first axis of `data`
-
-    Returns
-    -------
-    adc_map : (ny, nx) ADC in mm^2/s
-    s0_map  : (ny, nx) fitted S0
-    """
-    n_b, ny, nx = data.shape
-    adc_map = np.zeros((ny, nx))
-    s0_map = np.zeros((ny, nx))
-
-    # Background mask: use the b=0 image (lowest b, brightest) as the SNR proxy.
-    # This is more meaningful for diffusion than using "first echo" because
-    # signal drop with b is the quantity we are trying to fit.
-    if 0 in list(b_list):
-        b0_idx = list(b_list).index(0)
-    else:
-        b0_idx = int(np.argmin(b_list))
-    threshold = np.max(data[b0_idx]) * 0.1
-
-    b_arr = np.asarray(b_list, dtype=float)
-
-    for y in range(ny):
-        for x in range(nx):
-            pixel_series = data[:, y, x]
-
-            # Reject background / low-SNR voxels using the b=0 intensity.
-            if pixel_series[b0_idx] > threshold:
-                try:
-                    # p0: initial guess for [S0, ADC].
-                    #   S0_guess: the b=0 intensity is the most direct estimate.
-                    #   ADC_guess: 1e-3 mm^2/s ≈ typical brain parenchyma value.
-                    # bounds: keep both non-negative and clip ADC to a
-                    #   physiologically plausible upper limit (free water at 37 °C
-                    #   is ~3e-3 mm^2/s; CSF ~3.0e-3, so 5e-3 is a safe ceiling).
-                    popt, _ = curve_fit(
-                        stejskal_tanner,
-                        b_arr,
-                        pixel_series,
-                        p0=[pixel_series[b0_idx], 1e-3],
-                        bounds=(0, [np.inf, 5e-3]),
-                    )
-                    s0_map[y, x], adc_map[y, x] = popt
-                except Exception:
-                    # Non-convergent fit - leave this voxel as 0.
-                    continue
-
-    return adc_map, s0_map
-
-
-adc_result, s0_result = create_adc_map_scipy(trace_dwi, b_values)
-
-plt.figure()
-# Display in 1e-3 mm^2/s units (the standard clinical convention) and clip to
-# the physiological window so the colorbar is informative.
-plt.imshow(np.rot90(adc_result, -1) * 1e3, cmap="viridis", vmin=0, vmax=3.5)
-plt.colorbar(label="ADC (x10⁻³ mm²/s)")
-plt.title("NLLS Quantitative ADC Map")
-plt.show()
-
-
-# %% ==============================================================================
-#   ADC fitting helper - same shape as the second T2 cell, with QC notes
-# =================================================================================
-def stejskal_tanner(b, s0, adc):
-    return s0 * np.exp(-b * adc)
-
-
-def create_adc_map_scipy(data, b_list):
-    n_b, ny, nx = data.shape
-    adc_map = np.zeros((ny, nx))
-    s0_map = np.zeros((ny, nx))
-
-    # Background mask: skip pixels whose b=0 signal is below this fraction of
-    # the b=0 maximum. NB: 0.5 is aggressive - lower it for noisier data.
-    if 0 in list(b_list):
-        b0_idx = list(b_list).index(0)
-    else:
-        b0_idx = int(np.argmin(b_list))
-    threshold = np.max(data[b0_idx]) * 0.5
-
-    b_arr = np.asarray(b_list, dtype=float)
-
-    # Per-pixel fit. The outer loops are over image rows/columns;
-    # the inner curve_fit fits one diffusion decay curve at a time.
-    for y in range(ny):
-        for x in range(nx):
-            pixel_series = data[:, y, x]
-
-            # Reject background / low-SNR voxels using the b=0 intensity as a
-            # proxy for tissue signal.
-            if pixel_series[b0_idx] > threshold:
-                try:
-                    # p0: initial guess for [S0, ADC]. Using the b=0 intensity
-                    #   as S0_guess is robust because S(b=0) is, by definition,
-                    #   the closest direct estimate of S0 we have.
-                    # bounds: keep both parameters non-negative and clip ADC
-                    #   to a physiologically plausible range (≤ 5e-3 mm^2/s).
-                    popt, _ = curve_fit(
-                        stejskal_tanner,
-                        b_arr,
-                        pixel_series,
-                        p0=[pixel_series[b0_idx], 1e-3],
-                        bounds=(0, [np.inf, 5e-3]),
-                    )
-                    s0_map[y, x], adc_map[y, x] = popt
-                except Exception:
-                    # Non-convergent fit - leave this voxel as 0.
-                    # Consider logging or counting these for QC.
-                    continue
-
-    return adc_map, s0_map
-
-
-adc_result, s0_result = create_adc_map_scipy(trace_dwi, b_values)
-plt.figure()
-plt.imshow(np.rot90(adc_result, -1) * 1e3, cmap="viridis", vmin=0, vmax=3.5)
-plt.colorbar(label="ADC (x10⁻³ mm²/s)")
-plt.title("Quantitative ADC Map")
-plt.show()
 
 # %% ==============================================================================
 #   Library-style call: NLLS vs log-linear, paralleling the T2 example.
@@ -447,5 +311,35 @@ for i, ax in enumerate(axs):
     fig.colorbar(im, ax=ax, label="ADC (x10⁻³ mm²/s)")
 plt.tight_layout()
 plt.show()
+
+# %%
+ref = mr0.VoxelGridPhantom.load(rf"{PHANTOMS_DIR_PATH}\{phantoms[PHANTOM_IDX]}")
+max_dim = max(ref.D.shape)
+ref.D = pad_to_cube(ref.D, max_dim)
+ref.T2 = pad_to_cube(ref.T2, max_dim)
+ref.T2dash = pad_to_cube(ref.T2dash, max_dim)
+ref.T1 = pad_to_cube(ref.T1, max_dim)
+ref.PD = pad_to_cube(ref.PD, max_dim)
+ref.B0 = pad_to_cube(ref.B0, max_dim)
+ref.B1 = pad_to_cube(ref.B1, max_dim)
+
+ref = ref.interpolate(Nx, Ny, NZ).slices([SLICE_IDX])
+ref.plot()
+
+# %%
+fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+titles = ["NLLS Fit", "Log-Linear Fit", "T2 Map"]
+
+ims2 = [*ims, ref.T2]
+for i, ax in enumerate(axs):
+    if i < 2:
+        im = np.rot90(ims2[i], -1)
+        im = im / 1000
+    else:
+        im = np.rot90(ims2[i], 1)
+
+    im = ax.imshow(im, cmap="viridis", vmax=2)
+    ax.set_title(titles[i])
+    fig.colorbar(im, ax=ax, label="T2 (s)")
 
 # %%
