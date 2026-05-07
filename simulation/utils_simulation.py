@@ -20,6 +20,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 from pypulseq import Sequence
 import torch
+import torch.nn.functional as F
 
 
 def add_tumor_to_phantom(
@@ -290,3 +291,16 @@ def visualize_kspace_trajectory(seq: Sequence):
     plt.ylabel("ky")
 
     plt.show()
+
+
+def pad_to_cube(tensor, target_size):
+    """Pad tensor to cube with equal padding on both sides of each dimension."""
+    # tensor shape: (D, H, W) or (C, D, H, W)
+    spatial_dims = tensor.shape[-3:]
+    pads = []
+    for dim_size in reversed(spatial_dims):  # F.pad expects reverse order
+        total_pad = target_size - dim_size
+        pad_before = total_pad // 2
+        pad_after = total_pad - pad_before
+        pads.extend([pad_before, pad_after])
+    return F.pad(tensor, pads, mode="constant", value=0)

@@ -35,7 +35,7 @@ import matplotlib.pyplot as plt
 
 from pypulseq import Sequence
 
-from simulation_utils import *
+from utils_simulation import *
 
 np.int = int
 np.float = float

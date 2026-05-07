@@ -2065,19 +2065,20 @@ if __name__ == "__main__":
             fit_epi=False,
             calibration_readout=True,
             adc_dead_time_correction=True,
-            uniform_spoiler_areas=True,
-            uniform_spoiler_directions=False,
+            uniform_spoiler_areas=False,
+            uniform_spoiler_directions=True,
             phase_cycling=False,
             labeled=True,
             blip_down=False,
-            alternating_blip_polarity=False,
+            alternating_blip_polarity=True,
+    
         )
         # mesepi.print_spoiler_info()
         mesepi.plot(
             time_range=(5, 5.2),
         )
         # mesepi.plot_kspace_traj()
-        # mesepi.write()
+        mesepi.write()
         # mesepi.report()
         # plot_gradient_and_slew(mesepi.seq)
         # mesepi.validate_echo_timing()
