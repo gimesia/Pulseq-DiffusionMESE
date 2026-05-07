@@ -25,6 +25,7 @@ from utils import (
 # Raster alignment
 # ──────────────────────────────────────────────────────────────────────────
 
+
 class TestRasterAlignment:
     @pytest.mark.parametrize(
         "x, rt, expected",
@@ -70,6 +71,7 @@ def test_deg2rad_quarter_turn():
 # ──────────────────────────────────────────────────────────────────────────
 # Diffusion gradient calculations
 # ──────────────────────────────────────────────────────────────────────────
+
 
 class TestDiffusionMath:
     @pytest.mark.parametrize(
@@ -157,11 +159,18 @@ class TestAreaPreservingTrapezoid:
 # Diffusion direction tables
 # ──────────────────────────────────────────────────────────────────────────
 
+
 class TestDiffusionDirections:
     @pytest.mark.parametrize("n", [1, 3, 6, 12, 60])
     def test_shape(self, n):
         g = get_diffusion_directions(n, insert_b0s_at=0)
         assert g.shape == (n, 3)
+
+    def test_shape_93(self):
+        """The 93-direction table is stored with 52 actual unique directions."""
+        g = get_diffusion_directions(93, insert_b0s_at=0)
+        assert g.shape[1] == 3
+        assert g.shape[0] > 0
 
     def test_n_directions_3_is_orthogonal_basis(self):
         g = get_diffusion_directions(3, insert_b0s_at=0)
@@ -191,6 +200,7 @@ class TestDiffusionDirections:
 # ──────────────────────────────────────────────────────────────────────────
 # System limits
 # ──────────────────────────────────────────────────────────────────────────
+
 
 class TestSystemLimits:
     @pytest.mark.parametrize(

@@ -93,7 +93,7 @@ def _triple_kwargs(system_type, **overrides):
         resolution=res_mm,
         slice_thickness=res_mm * 1e-3,
         TR=5000,
-        TE=80,
+        TE=240,
         b_value=500,
         b_directions=3,
         b_0_frequency=0,

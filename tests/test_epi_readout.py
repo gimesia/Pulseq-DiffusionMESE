@@ -39,6 +39,7 @@ def _make_readout(system_type, **overrides):
 # Construction across all 4 system limits and matrix sizes
 # ──────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.parametrize("Nx, Ny", [(64, 64), (96, 96), (128, 96)])
 def test_construction_succeeds(system_type, Nx, Ny):
     """Smoke: every system × dimension combination builds without error."""
@@ -62,6 +63,7 @@ def test_construction_succeeds(system_type, Nx, Ny):
 # ──────────────────────────────────────────────────────────────────────────
 # k-space trajectory
 # ──────────────────────────────────────────────────────────────────────────
+
 
 def test_kspace_full_sampling(system_type):
     """pff=1.0, R=1: ky covers the full [-Ny/2, Ny/2-1] range."""
@@ -107,6 +109,7 @@ def test_blip_polarity_flips_gy_sign(system_type):
 # Hardware compliance
 # ──────────────────────────────────────────────────────────────────────────
 
+
 def test_verify_slew_rates_passes(system_type):
     """Reconstructed gx waveform must respect the system slew limit."""
     epi = _make_readout(system_type, verbose=True)  # verbose=True enables verify
@@ -117,6 +120,7 @@ def test_verify_slew_rates_passes(system_type):
 # ──────────────────────────────────────────────────────────────────────────
 # Duration trimming
 # ──────────────────────────────────────────────────────────────────────────
+
 
 def test_fit_to_duration_trims_lines(system_type):
     """Setting max_duration well below the natural duration drops acquired lines."""
@@ -138,13 +142,12 @@ def test_fit_to_duration_noop_when_within_budget(system_type):
 # Rephasers
 # ──────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.parametrize("simultan", [True, False])
 def test_rephasers_extend_duration(system_type, simultan):
     """rephasers=True increases the total readout duration vs no rephasers."""
     no_reph = _make_readout(system_type, rephasers=False)
-    with_reph = _make_readout(
-        system_type, rephasers=True, simultan_rephasers=simultan
-    )
+    with_reph = _make_readout(system_type, rephasers=True, simultan_rephasers=simultan)
 
     assert with_reph.duration > no_reph.duration
     assert with_reph.rephaser_duration > 0
@@ -155,6 +158,7 @@ def test_rephasers_extend_duration(system_type, simultan):
 # ──────────────────────────────────────────────────────────────────────────
 # Input validation
 # ──────────────────────────────────────────────────────────────────────────
+
 
 def test_invalid_partial_fourier_raises():
     """pff outside [0.5, 1.0] is rejected by the assert in __init__."""
@@ -197,6 +201,7 @@ def test_invalid_ramp_sampling_raises():
 # Sequence-attachment helpers
 # ──────────────────────────────────────────────────────────────────────────
 
+
 def test_add_to_sequence_unlabeled_emits_one_block_per_line(system_type):
     """Unlabeled mode adds Ny_eff blocks (one per ky line)."""
     epi = _make_readout(system_type)
@@ -219,3 +224,43 @@ def test_add_to_sequence_labeled_emits_at_least_lines(system_type):
     blocks_after = len(seq.block_events)
 
     assert blocks_after - blocks_before >= epi.Ny_eff
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# get_readout_events
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_get_readout_events_returns_valid_events(system_type):
+    """get_readout_events returns a (gx, gy, adc) tuple with non-None entries."""
+    epi = _make_readout(system_type)
+    for line in [0, epi.Ny_eff // 2, epi.Ny_eff - 1]:
+        gx_ev, gy_ev, adc_ev = epi.get_readout_events(line)
+        assert gx_ev is not None
+        assert gy_ev is not None
+        assert adc_ev is not None
+        # Even lines use positive gx; odd lines use negative gx_
+        if line % 2 == 0:
+            assert gx_ev.amplitude > 0
+        else:
+            assert gx_ev.amplitude < 0
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# echo_line_index
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_echo_line_index_at_full_fourier(system_type):
+    """With pff=1.0, the echo falls exactly at the Ny/2-th acquired line."""
+    Ny = 64
+    epi = _make_readout(system_type, Ny=Ny, partial_fourier_factor=1.0)
+    assert epi.echo_line_index == Ny // 2
+
+
+def test_echo_line_index_less_than_full_for_partial_fourier(system_type):
+    """With pff<1 the echo line index is smaller (fewer pre-echo lines)."""
+    Ny = 64
+    full = _make_readout(system_type, Ny=Ny, partial_fourier_factor=1.0)
+    partial = _make_readout(system_type, Ny=Ny, partial_fourier_factor=0.75)
+    assert partial.echo_line_index < full.echo_line_index

@@ -21,6 +21,7 @@ from tests.conftest import hard_failures  # type: ignore[import-not-found]
 # Construction across all 4 system limits
 # ──────────────────────────────────────────────────────────────────────────
 
+
 def test_constructs_for_each_system_limit(system_type, se_kwargs_factory):
     seq = EPIDiffusionSEPulseqSeq(**se_kwargs_factory(system_type))
     assert seq.seq is not None
@@ -32,6 +33,7 @@ def test_constructs_for_each_system_limit(system_type, se_kwargs_factory):
 # ──────────────────────────────────────────────────────────────────────────
 # Class validators
 # ──────────────────────────────────────────────────────────────────────────
+
 
 def test_validate_sequence_properties(system_type, se_kwargs_factory):
     seq = EPIDiffusionSEPulseqSeq(**se_kwargs_factory(system_type))
@@ -66,6 +68,7 @@ def test_b_value_within_tolerance(system_type, se_kwargs_factory):
 # Dimension sweep
 # ──────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.parametrize(
     "Nx, Ny, slice_thickness, N_slices",
     [
@@ -96,6 +99,7 @@ def test_dimensions(Nx, Ny, slice_thickness, N_slices, se_kwargs_factory):
 # ──────────────────────────────────────────────────────────────────────────
 # Feature toggles
 # ──────────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("pff", [0.75, 1.0])
 def test_partial_fourier_factor(se_kwargs_factory, pff):
@@ -158,7 +162,7 @@ def test_b0_only_sequence(se_kwargs_factory):
     assert ok
 
 
-@pytest.mark.parametrize("b_directions", [1, 3, 6])
+@pytest.mark.parametrize("b_directions", [1, 3, 6, 12])
 def test_multiple_b_directions(se_kwargs_factory, b_directions):
     """Direction count flows through to the build loop."""
     seq = EPIDiffusionSEPulseqSeq(
@@ -173,10 +177,10 @@ def test_amplitude_clamp_path(se_kwargs_factory):
     """User-fixed small_delta + impossibly large b forces the amplitude clamp."""
     kwargs = se_kwargs_factory(
         SystemLimitType.SAFE,
-        b_value=20000,           # very high
-        small_delta=0.005,       # short — forces G > max_grad
+        b_value=20000,  # very high
+        small_delta=0.005,  # short — forces G > max_grad
         big_DELTA=0.025,
-        TE=120,                  # widen so timing still fits
+        TE=120,  # widen so timing still fits
         fit_epi=False,
     )
     seq = EPIDiffusionSEPulseqSeq(**kwargs)
@@ -189,8 +193,45 @@ def test_fit_epi_disabled_raises(se_kwargs_factory):
     """TE too short with fit_epi=False must raise rather than silently retry."""
     kwargs = se_kwargs_factory(
         SystemLimitType.SAFE,
-        TE=10,           # impossibly short
+        TE=10,  # impossibly short
         fit_epi=False,
     )
     with pytest.raises(ValueError):
         EPIDiffusionSEPulseqSeq(**kwargs)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Metadata and file-naming
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_metadata_keys_present(se_kwargs_factory):
+    """metadata() must expose the core imaging and diffusion parameters."""
+    seq = EPIDiffusionSEPulseqSeq(**se_kwargs_factory(SystemLimitType.SAFE))
+    meta = seq.metadata()
+    for key in ("name", "fov", "Nx", "Ny", "TE", "b_value", "b_directions"):
+        assert key in meta, f"Key '{key}' missing from metadata()"
+
+
+def test_get_save_filename_format(se_kwargs_factory):
+    """Filename must be a non-empty string encoding the b-value and sequence name."""
+    seq = EPIDiffusionSEPulseqSeq(**se_kwargs_factory(SystemLimitType.SAFE))
+    fname = seq.get_save_filename()
+    assert isinstance(fname, str)
+    assert len(fname) > 0
+    assert str(seq.b_value) in fname
+    assert fname.endswith(".seq")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# b=0 interleaving
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_b0_frequency_inserts_b0_volumes(se_kwargs_factory):
+    """b_0_frequency=3 must insert b=0 volumes so total rows > b_dirs."""
+    seq = EPIDiffusionSEPulseqSeq(
+        **se_kwargs_factory(SystemLimitType.SAFE, b_directions=3, b_0_frequency=3)
+    )
+    # b_dirs stores the raw direction count; b_directions includes the inserted zeros
+    assert seq.b_directions.shape[0] > seq.b_dirs
