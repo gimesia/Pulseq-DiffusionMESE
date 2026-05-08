@@ -1,3 +1,6 @@
+# IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+# December 2024–November 2028, Grant Agreement No. 101169519).
+
 # %%
 import os
 import sys
@@ -57,7 +60,7 @@ TE = 100  # [ms] - must be feasible for the highest b-value below
 # Vary b-values instead of TEs. b=0 is required as the reference (S0).
 # A typical clinical DWI protocol uses b=0 and b=1000; for ADC fitting any
 # 2+ b-values work, but spreading them improves the fit conditioning.
-b_values = np.arange(100, 2101, 250)  # [s/mm^2]
+b_values = np.arange(100, 2501, 250)  # [s/mm^2]
 
 TR = 5000
 Nx = Ny = int(fov / slice_thickness)
@@ -65,7 +68,7 @@ Nx = Ny = int(fov / slice_thickness)
 # %% ==============================================================================
 #   Load phantom
 # =================================================================================
-PHANTOM_IDX = 4  # Select phantom index
+PHANTOM_IDX = 2  # Select phantom index
 NZ = 10
 SLICE_IDX = 4  # Select slice index
 add_tumor = True
@@ -126,8 +129,8 @@ for b_value in b_values:
         TE=TE,  # fixed across the series
         TR=TR,
         b_value=b_value,  # the swept variable
-        b_directions=12,
-        b_0_frequency=12,
+        b_directions=93,
+        b_0_frequency=93,
         save_dir=SEQUENCES_DIR_PATH,
         save_name=name,
         v141_compat=True,
@@ -330,16 +333,66 @@ ref.plot()
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
 titles = ["NLLS Fit", "Log-Linear Fit", "T2 Map"]
 
-ims2 = [*ims, ref.T2]
+ims2 = [*ims, ref.D]
 for i, ax in enumerate(axs):
     if i < 2:
         im = np.rot90(ims2[i], -1)
-        im = im / 1000
+        im = im * 1000
     else:
         im = np.rot90(ims2[i], 1)
 
-    im = ax.imshow(im, cmap="viridis", vmax=2)
+    im = ax.imshow(im, cmap="viridis")
     ax.set_title(titles[i])
-    fig.colorbar(im, ax=ax, label="T2 (s)")
+    fig.colorbar(im, ax=ax, label="Diffusibility (x10⁻³ mm²/s)")
+
+# %% ==============================================================================
+#   Diffusion tensor fit → MD and FA
+#
+# The ADC map above collapses each voxel's diffusion behaviour to a single
+# scalar by averaging directions (geometric mean → trace-DWI). With a
+# multi-direction acquisition we can do better: fit the rank-2 diffusion
+# tensor D directly from
+#       ln S(b, g) = ln S0 − b · gᵀ D g
+# (7 unknowns: ln S0 + 6 unique components of the symmetric D). With
+# n_b × n_dir measurements per voxel the system is heavily over-determined,
+# and a single OLS solve per voxel — vectorised across the slice — is enough.
+#
+# From the eigenvalues (λ1 ≥ λ2 ≥ λ3) of D we report the two standard
+# rotation-invariant scalars:
+#   - MD = (λ1+λ2+λ3)/3 — analogue of the trace-DWI ADC; should match it up
+#     to fit noise.
+#   - FA ∈ [0, 1] (Basser/Pierpaoli) — 0 for isotropic diffusion (CSF,
+#     grey matter), close to 1 for stick-like diffusion (coherent white
+#     matter tracts).
+# =================================================================================
+from utils_diffusion import create_dti_maps  # noqa: E402
+
+fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
+    reconstructed_magnitude_images,
+    b_values,
+    seq.b_directions,
+)
+print(
+    f"FA range: [{fa_map.min():.3f}, {fa_map.max():.3f}]; "
+    f"MD range: [{md_map.min()*1e3:.3f}, {md_map.max()*1e3:.3f}] *10⁻³ mm²/s"
+)
+
+# %% ==============================================================================
+#   Visualize MD and FA maps
+# =================================================================================
+fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+
+im = axs[0].imshow(np.rot90(md_map, -1) * 1e3, cmap="viridis", vmin=0, vmax=3.5)
+axs[0].set_title("Mean Diffusivity (MD)")
+axs[0].set_axis_off()
+fig.colorbar(im, ax=axs[0], label="MD (*10⁻³ mm²/s)")
+
+im = axs[1].imshow(np.rot90(fa_map, -1), cmap="inferno", vmin=0, vmax=0.01)
+axs[1].set_title("Fractional Anisotropy (FA)")
+axs[1].set_axis_off()
+fig.colorbar(im, ax=axs[1], label="FA")
+
+plt.tight_layout()
+plt.show()
 
 # %%

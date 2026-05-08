@@ -2066,7 +2066,7 @@ if __name__ == "__main__":
             calibration_readout=True,
             adc_dead_time_correction=True,
             uniform_spoiler_areas=False,
-            uniform_spoiler_directions=True,
+            uniform_spoiler_directions=False,
             phase_cycling=False,
             labeled=True,
             blip_down=False,
@@ -2075,7 +2075,7 @@ if __name__ == "__main__":
         )
         # mesepi.print_spoiler_info()
         mesepi.plot(
-            time_range=(5, 5.2),
+            time_range=(4.995, 5.225),
         )
         # mesepi.plot_kspace_traj()
         mesepi.write()

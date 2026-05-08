@@ -1,3 +1,6 @@
+# IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+# December 2024–November 2028, Grant Agreement No. 101169519).
+
 # %%
 import os
 import sys
@@ -43,7 +46,7 @@ PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
 fov = 224e-3
 res = 2.33333333
 slice_thickness = res * 1e-3
-TEs = np.arange(65, 265, 5)  # From 70 to 410 with a step of 5
+TEs = np.arange(65, 290, 5)  # From 70 to 410 with a step of 5
 TR = 5000
 b_value = 00
 Nx = Ny = int(fov / slice_thickness)
@@ -57,7 +60,7 @@ NZ = 10
 SLICE_IDX = 4  # Select slice index
 
 add_tumor = True
-tumor_size = (20, 20, 20)  # size of the tumor in voxels (x, y, z)
+tumor_size = (10, 10, 10)  # size of the tumor in voxels (x, y, z)
 
 
 phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if f.endswith(".npz")]
@@ -311,7 +314,7 @@ ref.plot()
 # %%
 
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
-titles = ["NLLS Fit", "Log-Linear Fit", "T2 Map"]
+titles = ["NLLS Fit", "Log-Linear Fit", "Reference T2 Map"]
 
 ims2 = [*ims, ref.T2]
 for i, ax in enumerate(axs):
@@ -325,4 +328,12 @@ for i, ax in enumerate(axs):
     ax.set_title(titles[i])
     fig.colorbar(im, ax=ax, label="T2 (s)")
 
+
+
+# %%
+try:
+    np.save("simulated/vol/T2_SSE.npy", ims2[0])
+    np.save("simulated/vol/T2_ref.npy", ims2[2])
+except Exception:
+    pass
 # %%
