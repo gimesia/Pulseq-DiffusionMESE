@@ -238,6 +238,7 @@ for i, ax in enumerate(axs):
         im_data = np.fliplr(im_data)  # flip horizontally to match ref orientation
     else:
         im_data = np.rot90(ims2[i], 1)
+    ims2[i] = im_data  # save for later
     im = ax.imshow(im_data, cmap="viridis",)
     ax.set_title(titles[i])
     ax.set_axis_off()
@@ -247,8 +248,7 @@ plt.show()
 
 # %%
 try:
-    np.save(rf"{VOLUMES_DIR_PATH}\T2_multishot_se_ETL{ETL}_nlls.npy", ims2[0])
-    np.save(rf"{VOLUMES_DIR_PATH}\T2_multishot_se_ETL{ETL}_loglinear.npy", ims2[1])
+    np.save(rf"{VOLUMES_DIR_PATH}\T2_multishot_se.npy", ims2[0])
     np.save(rf"{VOLUMES_DIR_PATH}\T2_ref.npy", np.rot90(ims2[2], 2))
     print("Saved T2 maps.")
 except Exception as e:

@@ -59,6 +59,7 @@ class SystemLimitType(str, Enum):
     SAFE = "safe"
     RISKY = "risky"
     EXTREME = "extreme"
+    AMRI_SOS = "amri_sos"
 
 
 def system_limit(
@@ -121,6 +122,19 @@ def system_limit(
             rf_ringdown_time=rf_ringdown_time,  # RF ringdown time in seconds
             rf_dead_time=rf_dead_time,  # RF dead time in seconds
             adc_dead_time=adc_dead_time,  # ADC dead time in seconds
+            adc_raster_time=adc_raster_time,  # ADC raster time in seconds
+            B0=2.89,  # Magnetic field strength in Tesla
+        )
+
+    elif type == SystemLimitType.AMRI_SOS:
+        return pp.Opts(
+            max_grad=32,  # mT/m
+            grad_unit="mT/m",  # Gradient unit
+            max_slew=130,  # T/m/s
+            slew_unit="T/m/s",  # Slew rate unit
+            rf_ringdown_time=30e-6,  # RF ringdown time in seconds
+            rf_dead_time=100e-6,  # RF dead time in seconds
+            adc_dead_time=20e-6,  # ADC dead time in seconds
             adc_raster_time=adc_raster_time,  # ADC raster time in seconds
             B0=2.89,  # Magnetic field strength in Tesla
         )

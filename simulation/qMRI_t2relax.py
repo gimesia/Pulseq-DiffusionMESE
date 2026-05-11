@@ -20,6 +20,7 @@ import MRzeroCore as mr0
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import nibabel as nib
 
 from pypulseq import Sequence
 from EPIDiffusionSEPulseqSeq import EPIDiffusionSEPulseqSeq
@@ -30,7 +31,10 @@ from mrinufft import get_operator
 np.int = int
 np.float = float
 np.complex = complex
+
 use_GPU = torch.cuda.is_available()
+
+BLIP_DOWN = False  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
 
 # =================================================================================
 #   Paths
@@ -38,6 +42,7 @@ use_GPU = torch.cuda.is_available()
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
 VOLUMES_DIR_PATH = rf".\simulated\vol"
 PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
 
 
 # %% ==============================================================================
@@ -48,8 +53,9 @@ res = 2.33333333
 slice_thickness = res * 1e-3
 TEs = np.arange(65, 290, 5)  # From 70 to 410 with a step of 5
 TR = 5000
-b_value = 00
+b_value = 0
 Nx = Ny = int(fov / slice_thickness)
+
 
 # %% ==============================================================================
 #   Load phantom
@@ -108,7 +114,7 @@ for te in TEs:
     # =================================================================================
     #   Generate sequence
     # =================================================================================
-    name = f"DiffSE-TE{te}"
+    name = f"DiffSE-TE{te}-{'blipdown' if BLIP_DOWN else 'blipup'}"
     seq = EPIDiffusionSEPulseqSeq(
         name=name,
         resolution=res,
@@ -119,8 +125,8 @@ for te in TEs:
         TE=te,
         TR=TR,
         b_value=b_value,
-        b_directions=3,
-        b_0_frequency=3,
+        b_directions=1,
+        b_0_frequency=0,
         save_dir=SEQUENCES_DIR_PATH,
         save_name=name,
         v141_compat=True,
@@ -128,7 +134,7 @@ for te in TEs:
         big_DELTA=0.03,
         system_type=SystemLimitType.EXTRASAFE,
         calibration_readout=True,
-        blip_down=True,
+        blip_down=BLIP_DOWN,
     )
 
     # Generate and write the sequence to a file
@@ -233,24 +239,35 @@ for te in TEs:
     img_size = (Ny, Nx)  # your Cartesian reconstruction grid size
 
     recon = []
-    for i in range(len(seq.b_directions)):
-        # Build one NUFFT operator shared across all directions (same EPI k-space trajectory)
-        nufft_op = get_operator(
-            backend_name="cufinufft" if False else "finufft",
-            samples=direction_trajectories[i],
-            shape=img_size,
-            n_coils=1,
-            density=True,
-        )
-        sig = dir_signal[i]
-        sig = torch.from_numpy(sig).to(torch.complex64)  # Convert to PyTorch tensor
-        print(f"Signal shape for direction {i+1}: {sig.shape}, dtype: {sig.dtype}")
-        img_complex = nufft_op.adj_op(sig.flatten())  # shape: (1, Ny, Nx) if n_coils=1
-        img_complex = img_complex.squeeze()  # (Ny, Nx)
-        print(
-            f"Reconstructed image shape for direction {i+1}: {img_complex.shape}, dtype: {img_complex.dtype}"
-        )
-        recon.append(img_complex.cpu().numpy())  # Move to CPU and convert to NumPy
+    # Build one NUFFT operator shared across all directions (same EPI k-space trajectory)
+    nufft_op = get_operator(
+        backend_name="cufinufft" if False else "finufft",
+        samples=direction_trajectories[i],
+        shape=img_size,
+        n_coils=1,
+        density=True,
+    )
+    sig = dir_signal[i]
+    sig = torch.from_numpy(sig).to(torch.complex64)  # Convert to PyTorch tensor
+    print(f"Signal shape for direction {i+1}: {sig.shape}, dtype: {sig.dtype}")
+    img_complex = nufft_op.adj_op(sig.flatten())  # shape: (1, Ny, Nx) if n_coils=1
+    img_complex = img_complex.squeeze().cpu().numpy()  # (Ny, Nx)
+    
+    mag_img = np.abs(img_complex)
+    print(
+        f"Reconstructed image shape for direction {i+1}: {img_complex.shape}, dtype: {img_complex.dtype}"
+    )
+    
+    nii_path = os.path.join(ECHO_IMAGES_DIR_PATH, f"{name}.nii.gz")
+    affine = np.array([
+        [res, 0, 0, 0],
+        [0, res, 0, 0],
+        [0, 0, res, 0],
+        [0, 0, 0, 1]
+    ])
+    nib.save(nib.Nifti1Image(np.asarray(mag_img, dtype=np.float32), affine=affine), nii_path)
+
+    recon.append(img_complex)  # Move to CPU and convert to NumPy        
     reconstructed_images.append(recon)
 
 print("Sequence generation complete.")
@@ -323,7 +340,7 @@ for i, ax in enumerate(axs):
         im = im / 1000
     else:
         im = np.rot90(ims2[i], 1)
-
+    ims2[i] = im  # save for later
     im = ax.imshow(im, cmap="viridis")
     ax.set_title(titles[i])
     fig.colorbar(im, ax=ax, label="T2 (s)")
@@ -332,7 +349,7 @@ for i, ax in enumerate(axs):
 
 # %%
 try:
-    np.save("simulated/vol/T2_SSE.npy", ims2[0])
+    np.save(f"simulated/vol/T2_SSE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0])
     np.save("simulated/vol/T2_ref.npy", ims2[2])
 except Exception:
     pass

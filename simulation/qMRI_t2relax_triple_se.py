@@ -22,6 +22,7 @@ if seq_path not in sys.path:
 import MRzeroCore as mr0
 import torch
 import matplotlib.pyplot as plt
+import nibabel as nib
 
 from EPIDiffusionTripleSEPulseqSeq import EPIDiffusionTripleSEPulseqSeq
 from utils import SystemLimitType
@@ -33,6 +34,7 @@ np.float = float
 np.complex = complex
 
 use_GPU = torch.cuda.is_available()
+BLIP_DOWN = False # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
 
 # =================================================================================
 #   Paths
@@ -40,6 +42,7 @@ use_GPU = torch.cuda.is_available()
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
 VOLUMES_DIR_PATH = rf".\simulated\vol"
 PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -51,10 +54,11 @@ slice_thickness = res * 1e-3
 # Triple SE: sweep ~15 TE1 values instead of 45.
 # Each TR yields 3 echoes (TE1, TE2, TE3 auto-computed), giving ~45 (TE, image)
 # pairs with only ~15 TRs — a 3× scan-time reduction vs the single-echo approach.
-TEs_TE1 = np.arange(80, 90, 5)  # 15 TE1 values [ms]
+TEs_TE1 = np.arange(80, 155, 5)  # 15 TE1 values [ms]
 TR = 5000
 b_value = 0
 Nx = Ny = int(fov / slice_thickness)
+
 
 # %% ==============================================================================
 #   Load phantom
@@ -116,7 +120,8 @@ for te1 in TEs_TE1:
         TE=te1,
         TR=TR,
         b_value=b_value,
-        b_directions=3,
+        b_directions=1,
+        b_0_frequency=0,
         save_dir=SEQUENCES_DIR_PATH,
         save_name=name,
         v141_compat=True,
@@ -124,7 +129,7 @@ for te1 in TEs_TE1:
         big_DELTA=0.03,
         system_type=SystemLimitType.EXTRASAFE,
         calibration_readout=True,
-        blip_down=True,
+        blip_down=BLIP_DOWN,
         ramp_sampling="ramp_sampled",
         uniform_spoiler_directions=False,
         uniform_spoiler_areas=False,
@@ -235,8 +240,19 @@ for te1 in TEs_TE1:
         echo_imgs.append(img_complex.cpu().numpy())
 
     for img, te_ms in zip(echo_imgs, [te1_ms, te2_ms, te3_ms]):
-        all_echo_images.append(np.abs(img))
+        mag_img = np.abs(img)
+        all_echo_images.append(mag_img)
         all_echo_tes.append(te_ms)
+
+        te_name = f"TE-{int(te_ms)}-{'blipdown' if BLIP_DOWN else 'blipup'}"
+        nii_path = os.path.join(ECHO_IMAGES_DIR_PATH, f"{name.replace(f'TE1-{te1}', '')}{te_name}.nii.gz")
+        affine = np.array([
+            [res, 0, 0, 0],
+            [0, res, 0, 0],
+            [0, 0, res, 0],
+            [0, 0, 0, 1]
+        ])
+        nib.save(nib.Nifti1Image(np.asarray(mag_img[:, :, np.newaxis], dtype=np.float32), affine=affine), nii_path)
 
 print(f"\nCollected {len(all_echo_images)} echo images across {len(TEs_TE1)} TRs.")
 
@@ -328,6 +344,7 @@ for i, ax in enumerate(axs):
         im_data = np.rot90(ims2[i], -1) / 1000
     else:
         im_data = np.rot90(ims2[i], 1)
+    ims2[i] = im_data  # save for later
     im = ax.imshow(im_data, cmap="viridis")
     ax.set_title(titles[i])
     ax.set_axis_off()
@@ -338,8 +355,8 @@ plt.show()
 
 # %%
 try:
-    np.save("simulated/vol/T2_MESE.npy", ims2[0])
-    np.save("simulated/vol/T2_ref.npy", np.rot90(ims2[2], 2))
+    np.save(f"simulated/vol/T2_MESE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0])
+    np.save("simulated/vol/T2_ref.npy", np.rot90(ims2[2], 1))
 except Exception:
     pass
 # %%
