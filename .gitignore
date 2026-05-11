@@ -1,4 +1,6 @@
 *.seq
+*.npy
+
 simulation/phantoms/brainweb/*
 
 # =======================================================================================
@@ -225,3 +227,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+simulation/simulated/vol/ADC_triple_se_echo1_loglinear.npy
+simulation/simulated/vol/ADC_triple_se_echo1_nlls.npy
+simulation/simulated/vol/ADC_triple_se_echo2_loglinear.npy
+simulation/simulated/vol/ADC_triple_se_echo2_nlls.npy
+simulation/simulated/vol/ADC_triple_se_echo3_loglinear.npy
+simulation/simulated/vol/ADC_triple_se_echo3_nlls.npy
+simulation/simulated/vol/FA_triple_se.npy
+simulation/simulated/vol/mag_images_triple_se_adc.npy
+simulation/simulated/vol/MD_triple_se.npy
+simulation/simulated/vol/T2_MESE.npy
+simulation/simulated/vol/T2_multishot_se_ETL1_loglinear.npy
+simulation/simulated/vol/T2_multishot_se_ETL1_nlls.npy
+simulation/simulated/vol/T2_SSE.npy

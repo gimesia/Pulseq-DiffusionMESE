@@ -1382,7 +1382,7 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         self.seq.set_definition("SliceThickness", self.slice_thickness)
         self.seq.set_definition("NNavigatorLines", 3)
         self.seq.set_definition("DiffusionDirections", self.b_directions.tolist())
-        self.seq.set_definition("bValue", self.b_value)
+        self.seq.set_definition("bValue", int(self.b_value))
         self.seq.set_definition("b0Frequency", self.b_0_frequency)
         self.seq.set_definition("SmallDelta", self.small_delta)
         self.seq.set_definition("BigDelta", self.big_DELTA)

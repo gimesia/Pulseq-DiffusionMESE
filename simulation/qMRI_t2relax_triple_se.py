@@ -122,14 +122,14 @@ for te1 in TEs_TE1:
         v141_compat=True,
         small_delta=0.018,
         big_DELTA=0.03,
-        system_type=SystemLimitType.EXTREME,
+        system_type=SystemLimitType.EXTRASAFE,
         calibration_readout=True,
         blip_down=True,
         ramp_sampling="ramp_sampled",
         uniform_spoiler_directions=False,
         uniform_spoiler_areas=False,
-        phase_cycling=True,
-        partial_fourier_factor=.75,
+        phase_cycling=False,
+        partial_fourier_factor=1,
     )
     seq.write()
 
@@ -328,7 +328,7 @@ for i, ax in enumerate(axs):
         im_data = np.rot90(ims2[i], -1) / 1000
     else:
         im_data = np.rot90(ims2[i], 1)
-    im = ax.imshow(im_data, cmap="viridis", vmax=2)
+    im = ax.imshow(im_data, cmap="viridis")
     ax.set_title(titles[i])
     ax.set_axis_off()
     fig.colorbar(im, ax=ax, label="T2 (s)")

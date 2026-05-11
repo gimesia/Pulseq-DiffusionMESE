@@ -126,7 +126,7 @@ for te in TEs:
         v141_compat=True,
         small_delta=0.018,
         big_DELTA=0.03,
-        system_type=SystemLimitType.EXTREME,
+        system_type=SystemLimitType.EXTRASAFE,
         calibration_readout=True,
         blip_down=True,
     )
@@ -324,7 +324,7 @@ for i, ax in enumerate(axs):
     else:
         im = np.rot90(ims2[i], 1)
 
-    im = ax.imshow(im, cmap="viridis", vmax=2)
+    im = ax.imshow(im, cmap="viridis")
     ax.set_title(titles[i])
     fig.colorbar(im, ax=ax, label="T2 (s)")
 
