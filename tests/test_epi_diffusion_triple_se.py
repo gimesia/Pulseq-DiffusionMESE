@@ -93,6 +93,55 @@ def test_three_echoes_have_increasing_te(triple_kwargs_factory):
     assert seq.TE < seq.TE2 < seq.TE3
 
 
+@pytest.mark.parametrize("TE_ms", list(range(95, 111)))
+def test_te3_whole_millisecond_in_95_110_range(TE_ms, triple_kwargs_factory):
+    """TE3 must be a whole millisecond for every TE1 in the 95-110 ms range.
+
+    The ceiling-rounding in _create_epi3() is supposed to guarantee this.
+    """
+    kwargs = triple_kwargs_factory(SystemLimitType.SAFE, TE=TE_ms, fit_epi=True)
+    seq = EPIDiffusionTripleSEPulseqSeq(**kwargs)
+
+    te3_ms = seq.TE3 * 1e3
+    residual_us = abs(te3_ms - round(te3_ms)) * 1e3
+    assert residual_us < 1.0, (
+        f"TE1={TE_ms} ms → TE3={te3_ms:.6f} ms is not a whole millisecond "
+        f"(residual {residual_us:.3f} µs)"
+    )
+
+
+@pytest.mark.parametrize("TE_ms", list(range(80, 125, 5)))
+def test_te3_step_size_in_95_110_range(TE_ms, triple_kwargs_factory):
+    """blip-down and blip-up must produce identical TE1, TE2, TE3.
+
+    Blip polarity only reverses the k-space traversal direction and must not
+    change echo timing. A bug in EPIReadout._setup_kspace_trajectory() places
+    ky=0 at Ny_pre=15 for blip_down=False vs Ny_pre=16 for blip_down=True
+    (pff=0.75, Ny=64), so the echo readout centre is 1 line-duration earlier
+    for one polarity. This shifts TE1/TE2/TE3 via time_until_echo. Comparing
+    Ny_pre (= echo_line_index) directly catches the bug regardless of how the
+    ms-ceiling rounding in the parent sequence absorbs the timing shift.
+    """
+    blip_down_seq = EPIDiffusionTripleSEPulseqSeq(
+        **triple_kwargs_factory(SystemLimitType.SAFE, TE=TE_ms, blip_down=True)
+    )
+    blip_up_seq = EPIDiffusionTripleSEPulseqSeq(
+        **triple_kwargs_factory(SystemLimitType.SAFE, TE=TE_ms, blip_down=False)
+    )
+
+    for name, epi_d, epi_u, te_d, te_u in [
+        ("TE1/EPI1", blip_down_seq.epi,  blip_up_seq.epi,  blip_down_seq.TE,  blip_up_seq.TE),
+        ("TE2/EPI2", blip_down_seq.epi2, blip_up_seq.epi2, blip_down_seq.TE2, blip_up_seq.TE2),
+        ("TE3/EPI3", blip_down_seq.epi3, blip_up_seq.epi3, blip_down_seq.TE3, blip_up_seq.TE3),
+    ]:
+        assert te_d == te_u, (
+            f"TE1={TE_ms} ms, {name}: echo line index (Ny_pre) differs — "
+            f"blip-down Ny_pre={epi_d.Ny_pre} (TE={te_d*1e3:.1f} ms), "
+            f"blip-up Ny_pre={epi_u.Ny_pre} (TE={te_u*1e3:.1f} ms)"
+        )
+        
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Dimension sweep
 # ──────────────────────────────────────────────────────────────────────────
