@@ -1026,11 +1026,17 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         )
 
         # Round TE2 up to the nearest ms for clean protocol display; split the extra
-        # ticks symmetrically to preserve spin-echo symmetry
-        ms_raster = 1e-3
-        target_TE2 = np.ceil(raw_TE2 / ms_raster) * ms_raster
+        # ticks symmetrically to preserve spin-echo symmetry.
+        # Use integer tick arithmetic to avoid np.ceil misfire on values like
+        # 142.00000000000003 ms (FP representation of exact 142 ms) → would
+        # otherwise jump target_TE2 to 143 ms.
         raster = self.system.grad_raster_time
-        extra_ticks = round((target_TE2 - raw_TE2) / raster)
+        ms_ticks = round(1e-3 / raster)  # ticks per ms; 100 for 10 µs raster
+        raw_ticks = round(raw_TE2 / raster)  # integer ticks, eliminates FP noise
+        
+        extra_ticks = int(round(raw_ticks / ms_ticks)) * ms_ticks - raw_ticks
+        # print(f"raw_TE2 = {raw_TE2*1e3:.4f} ms, extra_ticks = {extra_ticks}, "
+        #                 f"target TE2 = {(raw_TE2 + extra_ticks*raster)*1e3:.4f} ms")
 
         # Odd tick counts: one more tick goes to the pre-RF180_2 side
         extra_before = (extra_ticks // 2) * raster
@@ -1147,10 +1153,15 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             + self.epi3.time_until_echo
         )
 
-        ms_raster = 1e-3
-        target_TE3 = np.ceil(raw_TE3 / ms_raster) * ms_raster
+        # Same integer-tick ceiling as _create_epi2(): avoids np.ceil misfire on
+        # FP values like 177.00000000000003 (exact 177 ms) → TE3 += 1 ms ghost.
         raster = self.system.grad_raster_time
-        extra_ticks = round((target_TE3 - raw_TE3) / raster)
+        ms_ticks = round(1e-3 / raster)  # ticks per ms; 100 for 10 µs raster
+        raw_ticks = round(raw_TE3 / raster)  # integer ticks, eliminates FP noise
+
+        extra_ticks = int(round(raw_ticks / ms_ticks)) * ms_ticks - raw_ticks
+        # print(f"raw_TE3 = {raw_TE3*1e3:.4f} ms, extra_ticks = {extra_ticks}, "
+        #                 f"target TE3 = {(raw_TE3 + extra_ticks*raster)*1e3:.4f} ms")
 
         extra_before = (extra_ticks // 2) * raster
         extra_after = (extra_ticks - extra_ticks // 2) * raster
@@ -1172,7 +1183,7 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
             + self.delay_before_epi3
             + self.epi3.time_until_echo
         )
-        self.TE3 = actual_TE3  # align2rastertime_nearest(actual_TE3, raster)
+        self.TE3 = align2rastertime_nearest(actual_TE3, raster)
 
         self.epi3_total_time = (
             self.delay_before_rf180_3
@@ -2034,53 +2045,56 @@ if __name__ == "__main__":
     res = 2.33333333333333333333333333333
     dwell = 5 * 0.000001
 
-    for cp in [True, False]:
-        mesepi = EPIDiffusionTripleSEPulseqSeq(
-            name=f"DiffMESE",
-            fov=224e-3,
-            Nx=96,
-            Ny=96,
-            resolution=res,
-            slice_thickness=res * 1e-3,
-            partial_fourier_factor=0.75,
-            TR=5000,
-            TE=80,
-            rf90_duration=0.003,
-            rf180_duration=0.003,
-            dwell_time=dwell,
-            prephaser_duration=0.0005,
-            rephasers=True,
-            simultan_rephasers=False,
-            system_type=SystemLimitType.EXTREME,
-            rf180_spoiler=True,
-            ramp_sampling="ramp_sampled",
-            spoiler_amplitude=0.95,
-            b_0_frequency=3,
-            b_directions=3,
-            b_value=500,
-            small_delta=0.018,
-            big_DELTA=0.035,
-            acceleration_factor=1,
-            v141_compat=cp,
-            fit_epi=False,
-            calibration_readout=True,
-            adc_dead_time_correction=True,
-            uniform_spoiler_areas=False,
-            uniform_spoiler_directions=False,
-            phase_cycling=False,
-            labeled=True,
-            blip_down=False,
-            alternating_blip_polarity=True,
-    
-        )
-        # mesepi.print_spoiler_info()
-        mesepi.plot(
-            time_range=(4.995, 5.225),
-        )
-        # mesepi.plot_kspace_traj()
-        mesepi.write()
-        # mesepi.report()
-        # plot_gradient_and_slew(mesepi.seq)
-        # mesepi.validate_echo_timing()
-
+    results = {'blipup': [], 'blipdown': []}
+    for te in range(75, 110, 5):
+        for bp in [True, False]:
+            mesepi = EPIDiffusionTripleSEPulseqSeq(
+                name=f"DiffMESE",
+                fov=224e-3,
+                Nx=96,
+                Ny=96,
+                resolution=res,
+                slice_thickness=res * 1e-3,
+                partial_fourier_factor=0.75,
+                TR=5000,
+                TE=te,
+                rf90_duration=0.003,
+                rf180_duration=0.003,
+                dwell_time=dwell,
+                prephaser_duration=0.0005,
+                rephasers=True,
+                simultan_rephasers=False,
+                system_type=SystemLimitType.EXTRASAFE,
+                rf180_spoiler=True,
+                ramp_sampling="ramp_sampled",
+                spoiler_amplitude=0.95,
+                b_0_frequency=3,
+                b_directions=3,
+                b_value=500,
+                small_delta=0.018,
+                big_DELTA=0.035,
+                acceleration_factor=1,
+                v141_compat=True,
+                fit_epi=False,
+                calibration_readout=True,
+                adc_dead_time_correction=True,
+                uniform_spoiler_areas=False,
+                uniform_spoiler_directions=False,
+                phase_cycling=False,
+                labeled=True,
+                blip_down=bp,
+                alternating_blip_polarity=True,
+            )
+            # mesepi.print_spoiler_info()
+            # mesepi.plot(time_range=(4.995, 5.225),)
+            # mesepi.plot_kspace_traj()
+            # mesepi.write()
+            # mesepi.report()
+            # plot_gradient_and_slew(mesepi.seq)
+            # mesepi.validate_echo_timing()
+            if bp:
+                results['blipdown'].append((mesepi.TE, mesepi.TE2, mesepi.TE3))
+            else:
+                results['blipup'].append((mesepi.TE, mesepi.TE2, mesepi.TE3))
+    print(results)
     # %%
