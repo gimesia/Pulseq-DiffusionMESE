@@ -28,6 +28,8 @@ packages = ["src/pulseq_diffusion_mese"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
 
 [tool.ruff]
 line-length = 88
