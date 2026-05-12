@@ -34,7 +34,7 @@ np.complex = complex
 
 use_GPU = torch.cuda.is_available()
 
-BLIP_DOWN = False  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
+BLIP_DOWN = True  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
 
 # =================================================================================
 #   Paths

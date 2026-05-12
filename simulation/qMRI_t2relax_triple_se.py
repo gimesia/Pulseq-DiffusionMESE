@@ -356,7 +356,7 @@ plt.show()
 # %%
 try:
     np.save(f"simulated/vol/T2_MESE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0])
-    np.save("simulated/vol/T2_ref.npy", np.rot90(ims2[2], 1))
+    np.save("simulated/vol/T2_ref.npy", np.rot90(ims2[2], -1))
 except Exception:
     pass
 # %%

@@ -44,22 +44,28 @@ fov = 224e-3
 res = 2.33333333
 slice_thickness = res * 1e-3
 
-# Fixed TE across all b-values so T2 weighting is constant (Stejskal-Tanner).
-TE = 100            # [ms]
-TR = 5000           # [ms]
-ETL = 1             # echo train length (1 = conventional SE per shot)
+# Multiple TEs: ADC fit averages across TEs (T2 cancels in S(b)/S(0) ratio).
+# DTI fit uses ONLY the shortest TE for highest SNR. The DTI log-linear model
+# ln S = ln S0 - b * g^T D g assumes a single TE; mixing TEs makes S0 a function
+# of b-index (because high-b acquisitions weight differently across TEs via SNR),
+# which biases the tensor fit and inflates spurious FA.
+TE_VALUES = [100,]# 150, 200]         # [ms] — three echo times
+TE_FOR_DTI = TE_VALUES[0]           # use shortest TE for DTI (best SNR)
+TR = 5000                           # [ms]
+ETL = 1                             # echo train length (1 = conventional SE per shot)
 
-b_values = np.arange(100, 1501, 250)  # [s/mm²]
-b_directions_count = 3               # electrostatic scheme — enables DTI
-small_delta = 0.018                   # [s]
-big_DELTA = 0.03                      # [s]
+b_values = np.arange(0, 2301, 150)  # [s/mm²]
+B_DIRS = 3                         # 12 directions → full-rank, well-conditioned tensor fit
+small_delta = 0.018                 # [s]
+big_DELTA = 0.03                    # [s]
 
 Nx = Ny = int(fov / slice_thickness)
 N_shots = Ny // ETL
 
 print(
-    f"Matrix: {Ny}*{Nx}  ETL={ETL}  N_shots={N_shots}  Total TRs: {len(b_values) * N_shots}  "
-    f"b-values: {b_values}  directions: {b_directions_count}"
+    f"Matrix: {Ny}*{Nx}  ETL={ETL}  N_shots={N_shots}  "
+    f"TEs: {TE_VALUES} ms (DTI uses {TE_FOR_DTI} ms)  "
+    f"b-values: {b_values}  directions: {B_DIRS}"
 )
 
 # %% ==============================================================================
@@ -98,112 +104,165 @@ else:
 
 phantom_data = phantom.build()
 
-1# %% ================================================================================
-#   Main simulation loop: sweep b-values
+# %% ================================================================================
+#   Main simulation loop: sweep TEs × b-values
 # ================================================================================
-# Signal layout per b-value:
-#   n_dirs × N_shots × ETL × Nx = n_dirs × Ny × Nx samples
-# Per-direction k-space: signal[d*Ny*Nx:(d+1)*Ny*Nx].reshape(Ny, Nx)
+# Storage layout: images_per_te[te_idx] = (n_b, n_dirs, Ny, Nx)
+# This lets us:
+#   - Average across TEs for ADC (mag_images_adc)
+#   - Pick only the shortest TE for DTI (mag_images_dti)
+# without re-simulating anything.
 # ================================================================================
-all_images = []     # will become (n_b, n_dirs, Ny, Nx) after the loop
-n_dirs = None       # read from first sequence
+images_per_te = {te: [] for te in TE_VALUES}
+n_dirs = None
+last_seq = None  # keep reference for b_directions in DTI fit
 
-for b_value in b_values:
-    # ============================================================================
-    #   Build sequence
-    # ============================================================================
-    name = f"DiffSEMultishot-b{int(b_value)}"
-    seq = DiffusionSEMultishotPulseqSeq(
-        name=name,
-        fov=fov,
-        Nx=Nx,
-        Ny=Ny,
-        slice_thickness=slice_thickness,
-        TR=TR,
-        TE=TE,
-        ETL=ETL,
-        b_value=b_value,
-        b_directions=b_directions_count,
-        small_delta=small_delta,
-        big_DELTA=big_DELTA,
-        save_dir=SEQUENCES_DIR_PATH,
-        v141_compat=True,
-        system_type=SystemLimitType.SAFE,
-    )
-    seq.build_seq()
-    seq.write()
+for te in TE_VALUES:
+    for b_value in b_values:
+        # ============================================================================
+        #   Build sequence
+        # ============================================================================
+        name = f"DiffSEMultishot-b{int(b_value)}-te{int(te)}"
+        seq = DiffusionSEMultishotPulseqSeq(
+            name=name,
+            fov=fov,
+            Nx=Nx,
+            Ny=Ny,
+            slice_thickness=slice_thickness,
+            TR=TR,
+            TE=te,
+            ETL=ETL,
+            b_value=b_value,
+            b_directions=B_DIRS,
+            small_delta=small_delta,
+            big_DELTA=big_DELTA,
+            save_dir=SEQUENCES_DIR_PATH,
+            v141_compat=True,
+            system_type=SystemLimitType.SAFE,
+        )
+        seq.build_seq()
+        seq.write()
+        last_seq = seq
 
-    if n_dirs is None:
-        n_dirs = len(seq.b_directions)
-        print(f"n_dirs={n_dirs}, TE={seq.TE*1e3:.1f} ms")
+        if n_dirs is None:
+            n_dirs = len(seq.b_directions)
+            print(f"n_dirs={n_dirs}")
 
-    seq_filename = seq.get_save_filename()
-    print(f"[b={b_value}]  file: {seq_filename}")
+        seq_filename = seq.get_save_filename()
+        print(f"[TE={te}ms, b={b_value}]  file: {seq_filename}")
 
-    # ============================================================================
-    #   Simulate
-    # ============================================================================
-    seq0 = mr0.Sequence.import_file(rf"{SEQUENCES_DIR_PATH}\{seq_filename}")
-    if use_GPU:
-        seq0_gpu = seq0.cuda()
-        phantom_data_gpu = phantom_data.cuda()
-        graph = mr0.compute_graph(seq0_gpu, phantom_data_gpu, 20000, 1e-5)
-        signal = mr0.execute_graph(
-            graph, seq0_gpu, phantom_data_gpu, print_progress=True
-        ).cpu()
-        del seq0_gpu, phantom_data_gpu
-        torch.cuda.empty_cache()
-    else:
-        phantom_data_cpu = phantom_data.cpu()
-        graph = mr0.compute_graph(seq0, phantom_data_cpu, 2000, 1e-4)
-        signal = mr0.execute_graph(graph, seq0, phantom_data_cpu, print_progress=False)
-    try:
-        del seq0_gpu, phantom_data_gpu
-    except Exception:
-        pass
-    torch.cuda.empty_cache()
+        # ============================================================================
+        #   Simulate
+        # ============================================================================
+        seq0 = mr0.Sequence.import_file(rf"{SEQUENCES_DIR_PATH}\{seq_filename}")
+        seq0_gpu = None
+        phantom_data_gpu = None
+        if use_GPU:
+            seq0_gpu = seq0.cuda()
+            phantom_data_gpu = phantom_data.cuda()
+            graph = mr0.compute_graph(seq0_gpu, phantom_data_gpu, 50000, 1e-6)
+            signal = mr0.execute_graph(
+                graph, seq0_gpu, phantom_data_gpu, print_progress=True
+            ).cpu()
+        else:
+            phantom_data_cpu = phantom_data.cpu()
+            graph = mr0.compute_graph(seq0, phantom_data_cpu, 5000, 1e-5)
+            signal = mr0.execute_graph(graph, seq0, phantom_data_cpu, print_progress=False)
 
-    assert signal.shape[0] == n_dirs * Ny * Nx, (
-        f"Signal length mismatch: expected {n_dirs * Ny * Nx}, got {signal.shape[0]}"
-    )
+        # Clean up GPU memory
+        if seq0_gpu is not None:
+            del seq0_gpu
+        if phantom_data_gpu is not None:
+            del phantom_data_gpu
+        if use_GPU:
+            torch.cuda.empty_cache()
 
-    # ============================================================================
-    #   Reconstruct per direction (Cartesian iFFT — no NUFFT needed)
-    # ============================================================================
-    dir_images = []
-    for d in range(n_dirs):
-        kspace = signal[d * Ny * Nx : (d + 1) * Ny * Nx].numpy().reshape(Ny, Nx)
-        img_mag, _ = fft_reconstruct_image(kspace, use_gpu=use_GPU)
-        dir_images.append(img_mag.squeeze())
-    all_images.append(np.stack(dir_images, axis=0))   # (n_dirs, Ny, Nx)
-    print(f"  Reconstructed b={b_value}: {all_images[-1].shape}")
+        assert signal.shape[0] == n_dirs * Ny * Nx, (
+            f"Signal length mismatch: expected {n_dirs * Ny * Nx}, got {signal.shape[0]}"
+        )
+
+        # ============================================================================
+        #   Reconstruct per direction (Cartesian iFFT)
+        # ============================================================================
+        dir_images = []
+        for d in range(n_dirs):
+            kspace = signal[d * Ny * Nx : (d + 1) * Ny * Nx].numpy().reshape(Ny, Nx)
+            img_mag, _ = fft_reconstruct_image(kspace, use_gpu=use_GPU)
+            dir_images.append(img_mag.squeeze())
+        images_per_te[te].append(np.stack(dir_images, axis=0))  # (n_dirs, Ny, Nx)
+
+    print(f"  Completed TE={te} ms: {len(images_per_te[te])} b-values × {n_dirs} dirs")
 
 print("Simulation loop complete.")
 
 # %% ==============================================================================
-#   Assemble output arrays
+#   Assemble image stacks
 # ==============================================================================
-all_images = np.array(all_images)   # (n_b, n_dirs, Ny, Nx)
-mag_images = np.abs(all_images)
-print(f"mag_images shape: {mag_images.shape}")
+# Stack into (n_te, n_b, n_dirs, Ny, Nx) then derive the two views we need.
+stacked = np.stack(
+    [np.stack(images_per_te[te], axis=0) for te in TE_VALUES],
+    axis=0,
+)  # (n_te, n_b, n_dirs, Ny, Nx)
+
+# ADC: average across TEs (T2 cancels in S(b)/S(0) ratio)
+mag_images_adc = np.abs(stacked.mean(axis=0))         # (n_b, n_dirs, Ny, Nx)
+
+# DTI: use only the shortest TE (single-TE log-linear model, highest SNR)
+te_idx_dti = TE_VALUES.index(TE_FOR_DTI)
+mag_images_dti = np.abs(stacked[te_idx_dti])          # (n_b, n_dirs, Ny, Nx)
+
+print(f"mag_images_adc shape (TE-averaged): {mag_images_adc.shape}")
+print(f"mag_images_dti shape (TE={TE_FOR_DTI} ms only): {mag_images_dti.shape}")
 
 # %% ==============================================================================
-#   Visualize — show a subset of b-values for direction 0
+#   Diagnostic: b=0 direction consistency check
+# ==============================================================================
+# At b=0 the diffusion gradients have zero amplitude → all directions should produce
+# IDENTICAL images. Any direction-to-direction variation at b=0 indicates a sequence
+# artefact (e.g., residual eddy currents, timing mismatch between Gdiff axes) that
+# will corrupt the tensor fit at b > 0.
+b0_idx = int(np.argmin(b_values))
+b0_per_dir = mag_images_dti[b0_idx]                   # (n_dirs, Ny, Nx)
+b0_mean = b0_per_dir.mean(axis=0)
+brain_mask_b0 = b0_mean > 0.1 * b0_mean.max()
+
+print("\n=== b=0 direction consistency check ===")
+for d in range(n_dirs):
+    rel_diff = (b0_per_dir[d] - b0_mean) / (b0_mean + 1e-9)
+    rms = np.sqrt(np.mean(rel_diff[brain_mask_b0] ** 2))
+    print(f"  dir {d} ({last_seq.b_directions[d]}): RMS relative diff vs mean = {rms*100:.3f}%")
+print("If any RMS > ~1% the sequence has direction-dependent artefacts at b=0.\n")
+
+# %% ==============================================================================
+#   Visualize — show a subset of b-values for direction 0 (TE-averaged ADC stack)
 # ==============================================================================
 SHOW_DIR = 0
 b_subset = np.linspace(0, len(b_values) - 1, min(6, len(b_values)), dtype=int)
 
 fig, axs = plt.subplots(1, len(b_subset), figsize=(3 * len(b_subset), 3))
-fig.suptitle(f"Diffusion SE Multishot DWI (direction {SHOW_DIR}, TE={TE} ms)")
+fig.suptitle(f"Diffusion SE Multishot DWI (direction {SHOW_DIR}, TE-averaged)")
 for col, b_idx in enumerate(b_subset):
-    axs[col].imshow(mag_images[b_idx, SHOW_DIR], cmap="gray")
+    axs[col].imshow(np.rot90(mag_images_adc[b_idx, SHOW_DIR], -1), cmap="gray")
     axs[col].set_title(f"b={b_values[b_idx]:.0f}")
     axs[col].set_axis_off()
 plt.tight_layout()
 plt.show()
 
 # %% ==============================================================================
-#   Trace DWI — geometric mean across directions
+#   Per-direction comparison at mid b-value (sanity check for striping)
+# ==============================================================================
+b_mid_idx = len(b_values) // 2
+fig, axs = plt.subplots(1, min(n_dirs, 6), figsize=(3 * min(n_dirs, 6), 3))
+fig.suptitle(f"Per-direction DWI at b={b_values[b_mid_idx]:.0f} (TE={TE_FOR_DTI} ms)")
+for d in range(min(n_dirs, 6)):
+    axs[d].imshow(np.rot90(mag_images_dti[b_mid_idx, d], -1), cmap="gray")
+    axs[d].set_title(f"dir {d}\n{np.round(last_seq.b_directions[d], 2)}")
+    axs[d].set_axis_off()
+plt.tight_layout()
+plt.show()
+
+# %% ==============================================================================
+#   Trace DWI — geometric mean across directions (TE-averaged stack)
 # ==============================================================================
 eps = 1e-12
 
@@ -213,11 +272,11 @@ def compute_trace_dwi(mag):
     return np.exp(np.mean(np.log(mag + eps), axis=1))
 
 
-trace_dwi = compute_trace_dwi(mag_images)   # (n_b, Ny, Nx)
+trace_dwi = compute_trace_dwi(mag_images_adc)   # (n_b, Ny, Nx)
 print(f"Trace DWI shape: {trace_dwi.shape}")
 
 # %% ==============================================================================
-#   ADC maps
+#   ADC maps (uses TE-averaged trace DWI)
 # ==============================================================================
 from utils_diffusion import create_adc_map  # noqa: E402
 
@@ -240,43 +299,65 @@ print(
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
 titles = ["NLLS Fit", "Log-Linear Fit"]
 for i, adc in enumerate([adc_nlls, adc_ll]):
-    im = axs[i].imshow(adc * 1e3, cmap="viridis")
+    im = axs[i].imshow(np.fliplr(adc) * 1e3, cmap="viridis")
     axs[i].set_title(titles[i])
     axs[i].set_axis_off()
     fig.colorbar(im, ax=axs[i], label="ADC (x10⁻³ mm²/s)")
 plt.suptitle(
-    f"Diffusion SE Multishot ADC (TE={TE} ms, ETL={ETL}, "
-    f"{b_directions_count} directions)"
+    f"Diffusion SE Multishot ADC (TEs={TE_VALUES} ms, ETL={ETL}, "
+    f"{B_DIRS} directions, TE-averaged)"
 )
 plt.tight_layout()
 plt.show()
 
 # %% ==============================================================================
-#   DTI maps — FA and MD
+#   DTI maps — FA and MD (uses single-TE stack, NOT TE-averaged)
 # ==============================================================================
 from utils_diffusion import create_dti_maps  # noqa: E402
 
 fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
-    mag_images,           # (n_b, n_dirs, Ny, Nx)
+    mag_images_dti,           # (n_b, n_dirs, Ny, Nx) — single TE only
     b_values,
-    seq.b_directions,     # (n_dirs, 3) unit vectors from the last loop iteration
+    last_seq.b_directions,    # (n_dirs, 3) unit vectors
 )
+
+# Report distribution rather than just min/max — easier to spot noise-floor FA
+brain_mask_md = md_map > 0
+if brain_mask_md.any():
+    fa_brain = fa_map[brain_mask_md]
+    print(
+        f"FA in brain: median={np.median(fa_brain):.3f}, "
+        f"p95={np.percentile(fa_brain, 95):.3f}, "
+        f"max={fa_brain.max():.3f}"
+    )
+    print(
+        f"MD in brain: median={np.median(md_map[brain_mask_md])*1e3:.3f}, "
+        f"range=[{md_map[brain_mask_md].min()*1e3:.3f}, "
+        f"{md_map[brain_mask_md].max()*1e3:.3f}] x10⁻³ mm²/s"
+    )
 print(
-    f"FA range: [{fa_map.min():.3f}, {fa_map.max():.3f}]  "
-    f"MD range: [{md_map.min()*1e3:.3f}, {md_map.max()*1e3:.3f}] x10⁻³ mm²/s"
+    "NOTE: BrainWeb phantom has isotropic D (scalar). True FA = 0 everywhere; "
+    "any non-zero FA is fit noise. With 12 directions the noise floor should be "
+    "much flatter and lower than with 3."
 )
 
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
-im = axs[0].imshow(md_map * 1e3, cmap="viridis")
+im = axs[0].imshow(np.fliplr(md_map) * 1e3, cmap="viridis")
 axs[0].set_title("Mean Diffusivity (MD)")
 axs[0].set_axis_off()
 fig.colorbar(im, ax=axs[0], label="MD (x10⁻³ mm²/s)")
 
-im = axs[1].imshow(fa_map, cmap="inferno")
-axs[1].set_title("Fractional Anisotropy (FA)")
+# Auto-scale FA vmax to the 99th percentile of brain voxels — avoids hot-spot
+# pixels from dominating the colormap, and matches what a clinical viewer does.
+fa_vmax = np.percentile(fa_brain, 99) if brain_mask_md.any() else 0.1
+im = axs[1].imshow(np.fliplr(fa_map), cmap="inferno", vmin=0, vmax=fa_vmax)
+axs[1].set_title(f"Fractional Anisotropy (FA)  [vmax={fa_vmax:.3f}]")
 axs[1].set_axis_off()
 fig.colorbar(im, ax=axs[1], label="FA")
-plt.suptitle(f"Diffusion SE Multishot DTI (TE={TE} ms, ETL={ETL})")
+plt.suptitle(
+    f"Diffusion SE Multishot DTI (TE={TE_FOR_DTI} ms, ETL={ETL}, "
+    f"{B_DIRS} directions, single-TE fit)"
+)
 plt.tight_layout()
 plt.show()
 
@@ -300,8 +381,6 @@ ref.T1 = pad_to_cube(ref.T1, max_dim)
 ref.PD = pad_to_cube(ref.PD, max_dim)
 ref.B0 = pad_to_cube(ref.B0, max_dim)
 ref.B1 = pad_to_cube(ref.B1, max_dim)
-
-
 
 ref = ref.interpolate(Nx, Ny, NZ).slices([SLICE_IDX])
 ref.plot()
