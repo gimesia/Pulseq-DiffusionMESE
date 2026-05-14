@@ -293,14 +293,29 @@ def visualize_kspace_trajectory(seq: Sequence):
     plt.show()
 
 
-def pad_to_cube(tensor, target_size):
-    """Pad tensor to cube with equal padding on both sides of each dimension."""
-    # tensor shape: (D, H, W) or (C, D, H, W)
-    spatial_dims = tensor.shape[-3:]
+def pad_to_cube(tensor, target_size, pad_depth=False):
+    """Pad tensor to cube with equal padding on both sides of each dimension.
+
+    Args:
+        tensor: shape (H, W, D) or (C, H, W, D)
+        target_size: int target for spatial dimensions (applied to H and W,
+            and to D only if pad_depth is True)
+        pad_depth: if False, do not pad the depth (D) dimension.
+    """
+    # tensor shape: (H, W, D) or (C, H, W, D)
+    spatial_dims = list(tensor.shape[-3:])
+    # If not padding depth, set target for depth to current size
+    if not pad_depth:
+        depth_target = spatial_dims[-1]
+    else:
+        depth_target = target_size
+
+    targets = [target_size, target_size, depth_target]
     pads = []
-    for dim_size in reversed(spatial_dims):  # F.pad expects reverse order
-        total_pad = target_size - dim_size
+    for dim_size, tgt in zip(reversed(spatial_dims), reversed(targets)):
+        total_pad = max(0, tgt - dim_size)
         pad_before = total_pad // 2
         pad_after = total_pad - pad_before
         pads.extend([pad_before, pad_after])
+
     return F.pad(tensor, pads, mode="constant", value=0)
