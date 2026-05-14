@@ -31,6 +31,7 @@ import MRzeroCore as mr0
 #  Internal helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _sanitize(phantom: mr0.VoxelGridPhantom) -> mr0.VoxelGridPhantom:
     """Replace NaN/Inf in all maps (real and complex) with 0.
 
@@ -80,21 +81,23 @@ def _pad_to_square_hw(phantom: mr0.VoxelGridPhantom) -> mr0.VoxelGridPhantom:
     new_size[1] = phantom.size[1] * target / sy
 
     p = deepcopy(phantom)
-    p.PD        = _pad(phantom.PD)
-    p.T1        = _pad(phantom.T1)
-    p.T2        = _pad(phantom.T2)
-    p.T2dash    = _pad(phantom.T2dash)
-    p.D         = _pad(phantom.D)
-    p.B0        = _pad(phantom.B0)
-    p.B1        = _pad_mc(phantom.B1)
+    p.PD = _pad(phantom.PD)
+    p.T1 = _pad(phantom.T1)
+    p.T2 = _pad(phantom.T2)
+    p.T2dash = _pad(phantom.T2dash)
+    p.D = _pad(phantom.D)
+    p.B0 = _pad(phantom.B0)
+    p.B1 = _pad_mc(phantom.B1)
     p.coil_sens = _pad_mc(phantom.coil_sens)
-    p.size      = new_size
+    p.size = new_size
     if phantom.tissue_masks:
         p.tissue_masks = {k: _pad(v) for k, v in phantom.tissue_masks.items()}
 
-    print(f"[square pad]  ({sx}, {sy}, {sz}) → {tuple(p.PD.shape)}, "
-          f"FOV {[round(v * 1e3, 1) for v in phantom.size.tolist()]} mm "
-          f"→ {[round(v * 1e3, 1) for v in new_size.tolist()]} mm")
+    print(
+        f"[square pad]  ({sx}, {sy}, {sz}) → {tuple(p.PD.shape)}, "
+        f"FOV {[round(v * 1e3, 1) for v in phantom.size.tolist()]} mm "
+        f"→ {[round(v * 1e3, 1) for v in new_size.tolist()]} mm"
+    )
     return p
 
 
@@ -117,10 +120,10 @@ def _match_fov(
     sx, sy, sz = phantom.PD.shape
 
     # Current voxel pitch (same in x and y after _pad_to_square_hw)
-    vox = phantom.size[0].item() / sx   # metres per voxel
+    vox = phantom.size[0].item() / sx  # metres per voxel
 
-    target_n = round(fov_m / vox)       # voxels needed to span fov_m
-    delta = target_n - sx               # positive → need to add, negative → crop
+    target_n = round(fov_m / vox)  # voxels needed to span fov_m
+    delta = target_n - sx  # positive → need to add, negative → crop
 
     if delta == 0:
         print(f"[FOV match]   FOV already {fov_mm:.1f} mm — no adjustment needed")
@@ -130,10 +133,11 @@ def _match_fov(
         # --- pad ---
         p0 = delta // 2
         p1 = delta - p0
-        pad = (0, 0, p0, p1, p0, p1)   # same padding applied to both x and y
+        pad = (0, 0, p0, p1, p0, p1)  # same padding applied to both x and y
 
         def _adj(t):
             return F.pad(t, pad, mode="constant", value=0.0)
+
         def _adj_mc(t):
             return torch.stack([_adj(t[c]) for c in range(t.shape[0])], dim=0)
 
@@ -145,6 +149,7 @@ def _match_fov(
 
         def _adj(t):
             return t[c0:c1, c0:c1, :]
+
         def _adj_mc(t):
             return t[:, c0:c1, c0:c1, :]
 
@@ -155,27 +160,30 @@ def _match_fov(
     new_size[1] = fov_m
 
     p = deepcopy(phantom)
-    p.PD        = _adj(phantom.PD)
-    p.T1        = _adj(phantom.T1)
-    p.T2        = _adj(phantom.T2)
-    p.T2dash    = _adj(phantom.T2dash)
-    p.D         = _adj(phantom.D)
-    p.B0        = _adj(phantom.B0)
-    p.B1        = _adj_mc(phantom.B1)
+    p.PD = _adj(phantom.PD)
+    p.T1 = _adj(phantom.T1)
+    p.T2 = _adj(phantom.T2)
+    p.T2dash = _adj(phantom.T2dash)
+    p.D = _adj(phantom.D)
+    p.B0 = _adj(phantom.B0)
+    p.B1 = _adj_mc(phantom.B1)
     p.coil_sens = _adj_mc(phantom.coil_sens)
-    p.size      = new_size
+    p.size = new_size
     if phantom.tissue_masks:
         p.tissue_masks = {k: _adj(v) for k, v in phantom.tissue_masks.items()}
 
-    print(f"[FOV match]   {action}, "
-          f"size → [{fov_mm:.1f}, {fov_mm:.1f}, "
-          f"{round(phantom.size[2].item() * 1e3, 1)}] mm")
+    print(
+        f"[FOV match]   {action}, "
+        f"size → [{fov_mm:.1f}, {fov_mm:.1f}, "
+        f"{round(phantom.size[2].item() * 1e3, 1)}] mm"
+    )
     return p
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Public API
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def load_phantom(
     json_path: str,
@@ -221,8 +229,6 @@ def load_phantom(
     print(f"[load]        tissues : {list(tissue_dict.keys())}")
     print(f"[load]        native  : {next(iter(tissue_dict.values())).PD.shape}")
 
-    
-
     phantom = tissue_dict.combine()
 
     # 2. Sanitize NaN/Inf from combine()'s 0/0 weighted average
@@ -236,16 +242,24 @@ def load_phantom(
 
     # 5. Compute matrix size from FOV and resolution
     nx = ny = round(fov_mm / resolution_mm)
-    vox_z  = phantom.size[2].item() * 1e3 / round(phantom.size[2].item() / (resolution_mm * 1e-3))
-    nz     = round(phantom.size[2].item() / (resolution_mm * 1e-3))
-    print(f"[grid]        NX=NY={nx}, NZ={nz}  "
-          f"(voxel {resolution_mm:.4f} × {resolution_mm:.4f} × {vox_z:.3f} mm)")
+    vox_z = (
+        phantom.size[2].item()
+        * 1e3
+        / round(phantom.size[2].item() / (resolution_mm * 1e-3))
+    )
+    nz = round(phantom.size[2].item() / (resolution_mm * 1e-3))
+    print(
+        f"[grid]        NX=NY={nx}, NZ={nz}  "
+        f"(voxel {resolution_mm:.4f} × {resolution_mm:.4f} × {vox_z:.3f} mm)"
+    )
 
     # 6. Interpolate to simulation grid
     phantom = phantom.interpolate(nx, ny, nz)
     vox_mm = (phantom.size / torch.tensor(phantom.D.shape) * 1e3).tolist()
-    print(f"[interpolate] shape: {tuple(phantom.D.shape)}, "
-          f"voxel: {[round(v, 4) for v in vox_mm]} mm")
+    print(
+        f"[interpolate] shape: {tuple(phantom.D.shape)}, "
+        f"voxel: {[round(v, 4) for v in vox_mm]} mm"
+    )
 
     # 7. Select slice
     if slice_idx is None:
@@ -254,26 +268,33 @@ def load_phantom(
     print(f"[slice]       {slice_idx}/{nz}")
 
     phantom_data = phantom.build()
-    print(f"[build]       {phantom_data.PD.shape[0]} voxels, "
-          f"PD sum = {phantom_data.PD.sum().item():.1f}")
+    print(
+        f"[build]       {phantom_data.PD.shape[0]} voxels, "
+        f"PD sum = {phantom_data.PD.sum().item():.1f}"
+    )
 
     # Sanitize B1/coil_sens in SimData after build().
     # NaN can survive interpolation boundaries into brain-tissue voxels even
     # after pre-build sanitization. NaN real → 1.0 (nominal flip, no B1 info),
     # NaN imag → 0.0 (no phase offset). Then recompute avg_B1_trig.
     def _fix_complex(t: torch.Tensor, default_real: float = 1.0) -> torch.Tensor:
-        real = torch.nan_to_num(t.real, nan=default_real, posinf=default_real, neginf=0.0)
-        imag = torch.nan_to_num(t.imag, nan=0.0,          posinf=0.0,          neginf=0.0)
+        real = torch.nan_to_num(
+            t.real, nan=default_real, posinf=default_real, neginf=0.0
+        )
+        imag = torch.nan_to_num(t.imag, nan=0.0, posinf=0.0, neginf=0.0)
         return torch.complex(real, imag)
 
     b1_nans = phantom_data.B1.isnan().sum().item()
     if b1_nans > 0:
-        phantom_data.B1        = _fix_complex(phantom_data.B1,        default_real=1.0)
+        phantom_data.B1 = _fix_complex(phantom_data.B1, default_real=1.0)
         phantom_data.coil_sens = _fix_complex(phantom_data.coil_sens, default_real=1.0)
         from MRzeroCore.phantom.sim_data import calc_avg_B1_trig
+
         phantom_data.avg_B1_trig = calc_avg_B1_trig(phantom_data.B1, phantom_data.PD)
-        print(f"[sanitize B1] fixed {b1_nans} NaN values in SimData.B1, "
-              f"avg_B1_trig nans remaining: "
-              f"{phantom_data.avg_B1_trig.isnan().sum().item()}")
+        print(
+            f"[sanitize B1] fixed {b1_nans} NaN values in SimData.B1, "
+            f"avg_B1_trig nans remaining: "
+            f"{phantom_data.avg_B1_trig.isnan().sum().item()}"
+        )
 
     return phantom, phantom_data

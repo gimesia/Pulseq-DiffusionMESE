@@ -23,7 +23,7 @@ import phantom_loader
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
 # such as using environment variables or a configuration file.
-seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
+seq_path = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
@@ -43,7 +43,7 @@ np.complex = complex
 
 use_GPU = torch.cuda.is_available()
 B_DIRS = 6
-BLIP_DOWN = True  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
+BLIP_DOWN = False  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
 PHANTOM_IDX = 0
 
 # =================================================================================
@@ -51,8 +51,8 @@ PHANTOM_IDX = 0
 # =================================================================================
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
 VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
-PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
+PHANTOMS_DIR_PATH = rf"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
 
 
 # %% ==============================================================================
@@ -323,15 +323,20 @@ print(
 # =================================================================================
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
 fig.suptitle("Single SE ADC (all echoes combined) vs Reference")
+
+adc_nlls= np.rot90(adc_nlls, -1) * 1e3
+adc_ll = np.rot90(adc_ll, -1) * 1e3
+adc_ref = np.rot90(D, 1)
+
 ims_data = [
-    (np.rot90(adc_nlls, -1) * 1e3, "NLLS (all echoes)", "ADC (x10⁻³ mm²/s)", "viridis"),
+    (adc_nlls, "NLLS (all echoes)", "ADC (x10⁻³ mm²/s)", "viridis"),
     (
-        np.rot90(adc_ll, -1) * 1e3,
+        adc_ll,
         "Log-Linear (all echoes)",
         "ADC (x10⁻³ mm²/s)",
         "viridis",
     ),
-    (np.rot90(D, 1), "Reference D map", "D (x10⁻³ mm²/s)", "viridis"),
+    (adc_ref, "Reference D map", "D (x10⁻³ mm²/s)", "viridis"),
 ]
 for ax, (im_data, title, label, cmap) in zip(axs, ims_data):
     im = ax.imshow(im_data, cmap=cmap, vmax=3.1)  # ADC values are typically in the range of 0-3 x10⁻³ mm²/s
@@ -384,7 +389,7 @@ plt.show()
 #   Save outputs
 # =================================================================================
 try:
-    np.save(f"{VOLUMES_DIR_PATH}/ADC_single_se.npy", adc_nlls)
+    np.save(f"{VOLUMES_DIR_PATH}/ADC_SSE{'blipdown' if BLIP_DOWN else 'blipup'}.npy", adc_nlls)
     print(f"Saved all maps to {VOLUMES_DIR_PATH}")
 except Exception as e:
     print(f"Could not save volumes: {e}")

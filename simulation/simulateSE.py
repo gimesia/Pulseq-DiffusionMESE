@@ -35,6 +35,7 @@ import matplotlib.pyplot as plt
 
 from pypulseq import Sequence
 
+import phantom_loader
 from utils_simulation import *
 
 np.int = int
@@ -70,52 +71,20 @@ tumor_size = (10, 10, 10)  # size of the tumor in voxels (x, y, z)
 # %% ==============================================================================
 #   Load phantom
 # =================================================================================
-phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if f.endswith(".npz")]
+phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if "brainweb" in f]
 print("Available phantoms:", phantoms)
-phantom_path = os.path.join(PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX])
+phantom_path = os.path.join(
+    PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX], f"{phantoms[PHANTOM_IDX]}-3T.json"
+)
+print(f"Loading phantom from {phantom_path} ...")
 
-
-if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
-    ## =======================================================================================================================
-    phantom = mr0.VoxelGridPhantom.load(phantom_path)  # Load phantom
-    print(f"Loaded phantom {os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}")
-    phantom = phantom.interpolate(NX, NY, NZ)  # Resize phantom, select slice
-    print(f"Resized phantom. Shape: {phantom.D.shape}")
-
-    phantom.voxel_size = torch.Tensor(
-        [0.00233, 0.00233, 0.00233]
-    )  # Set voxel size (in mm)
-
-    vox = phantom.voxel_size
-
-    if add_tumor:
-        # typical brain tumor ADC values are around ~1.5 * 10^-3 mm^2/s,
-        # which lies between GM/WM and CSF (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3000221)
-        phantom = add_tumor_to_phantom(
-            phantom,
-            tumor_size=tumor_size,
-            tumor_location="br",
-            adc_tumor_core=1.5,
-            adc_tumor_border=2.5,  # 'tl', 'bl', 'tr', 'br' or (cx, cy, cz)
-        )
-
-    phantom = phantom.slices([SLICE_IDX])  # Resize phantom, select slice
-    print(f"Selected slice. Shape: {phantom.D.shape}")
-
-else:
-    raise FileNotFoundError(f"Error: Invalid phantom file at {phantom_path}")
-
-# Visualize and build phantom
-PD = phantom.PD
-T1 = phantom.T1
-T2 = phantom.T2
+phantom, phantom_data = phantom_loader.load_phantom(
+    json_path=phantom_path,
+    resolution_mm=2.33,
+    slice_idx=None,
+)
 D = phantom.D
-B0 = phantom.B0
-B1 = phantom.B1
-
-phantom.plot()  # Plot phantom
-phantom_data = phantom.build()  # Build phantom with specified voxel size (in mm)
-
+T2 = phantom.T2
 # %% ==============================================================================
 #   Load sequence
 # =================================================================================

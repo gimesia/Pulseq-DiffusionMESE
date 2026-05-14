@@ -23,7 +23,7 @@ import phantom_loader
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
 # such as using environment variables or a configuration file.
-seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
+seq_path = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
@@ -51,8 +51,8 @@ PHANTOM_IDX = 0
 # =================================================================================
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
 VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
-PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
+PHANTOMS_DIR_PATH = rf"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -68,7 +68,7 @@ slice_thickness = res * 1e-3
 TE1 = 100  # [ms]
 
 # Vary b-values instead of TEs. Matches qMRI_adc.py exactly.
-b_values = np.arange(0, 2001, 500, dtype=int)  # [s/mm^2]  — matches qMRI_adc.py
+b_values = np.arange(0, 2001, 100, dtype=int)  # [s/mm^2]  — matches qMRI_adc.py
 
 TR = 5000
 Nx = Ny = int(fov / slice_thickness)
@@ -346,7 +346,7 @@ plt.show()
 def compute_trace_dwi(mag):
     """Geometric mean across diffusion directions. mag: (n_b, n_dirs, Ny, Nx).
 
-    Floor is data-scaled (not 1e-12) so that a single noise-floor voxel in
+    Floor is data-scaled so that a single noise-floor voxel in
     one direction at high b doesn't drag the geometric mean to ~0 and create
     a fake fast-decay (= falsely high ADC).
     """
@@ -391,15 +391,19 @@ plt.show()
 # =================================================================================
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
 fig.suptitle("Triple SE ADC (all echoes combined) vs Reference")
+
+adc_nlls = np.rot90(adc_nlls, -1) * 1e3
+adc_ll = np.rot90(adc_ll, -1) * 1e3
+adc_ref = np.rot90(D, 1)
 ims_data = [
-    (np.rot90(adc_nlls, -1) * 1e3, "NLLS (all echoes)", "ADC (x10⁻³ mm²/s)", "viridis"),
+    (adc_nlls, "NLLS (all echoes)", "ADC (x10⁻³ mm²/s)", "viridis"),
     (
-        np.rot90(adc_ll, -1) * 1e3,
+        adc_ll,
         "Log-Linear (all echoes)",
         "ADC (x10⁻³ mm²/s)",
         "viridis",
     ),
-    (np.rot90(D, 1), "Reference D map", "D (x10⁻³ mm²/s)", "viridis"),
+    (adc_ref, "Reference D map", "D (x10⁻³ mm²/s)", "viridis"),
 ]
 for ax, (im_data, title, label, cmap) in zip(axs, ims_data):
     im = ax.imshow(im_data, cmap=cmap, vmax=3.1)  # ADC values are typically in the range of 0-3 x10⁻³ mm²/s
@@ -452,9 +456,8 @@ plt.show()
 # =================================================================================
 try:
     np.save(
-        f"simulated/vol/ADC_MESE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", adc_nlls[0]
+        f"{VOLUMES_DIR_PATH}/ADC_MSE{'blipdown' if BLIP_DOWN else 'blipup'}.npy", adc_nlls
     )
-    np.save(f"{VOLUMES_DIR_PATH}/ADC_triple_se.npy", adc_nlls)
     print(f"Saved all maps to {VOLUMES_DIR_PATH}")
 except Exception as e:
     print(f"Could not save volumes: {e}")

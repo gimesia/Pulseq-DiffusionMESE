@@ -115,7 +115,7 @@ def _fit_adc_nlls(data, b_values, threshold_frac=0.1, adc_init=1e-3, adc_max=5e-
     return adc_map, s0_map
 
 
-def _fit_adc_loglinear(data, b_values, threshold_frac=0.1):
+def _fit_adc_loglinear(data, b_values, threshold_frac=0.1, adc_min = 0.0, adc_max = np.inf):
     """Vectorised log-linear ADC fit: ln(S) = ln(S0) - b * ADC.
 
     Closed-form OLS over all voxels at once - much faster than NLLS but
@@ -130,6 +130,10 @@ def _fit_adc_loglinear(data, b_values, threshold_frac=0.1):
     b_values : (n_b,) array-like
     threshold_frac : float
         Background mask threshold on the b=0 image.
+    adc_min : float
+        Lower bound on ADC.
+    adc_max : float
+        Upper bound on ADC.
 
     Returns
     -------
@@ -170,7 +174,7 @@ def _fit_adc_loglinear(data, b_values, threshold_frac=0.1):
     # rather than left as garbage, matching how the NLLS path handles
     # failed fits.
     adc_map = np.where(mask, adc_map, 0.0)
-    adc_map = np.where((adc_map < 0) | (adc_map > 5e-3), 0.0, adc_map)
+    adc_map = np.where((adc_map < adc_min) | (adc_map > adc_max), 0.0, adc_map)
     s0_map = np.where(mask, s0_map, 0.0)
 
     return adc_map, s0_map

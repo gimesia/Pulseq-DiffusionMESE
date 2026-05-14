@@ -23,9 +23,10 @@ import phantom_loader
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
 # such as using environment variables or a configuration file.
-seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
+seq_path = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
+
 
 # %%
 from DiffusionSEMultishotPulseqSeq import DiffusionSEMultishotPulseqSeq
@@ -34,7 +35,7 @@ from utils_simulation import *
 from mrinufft import get_operator
 
 logger = logging.getLogger()
-logger.setLevel(logging.FATAL)  # Suppress INFO and WARNING
+logger.setLevel(logging.ERROR)  # Suppress INFO and WARNING
 warnings.filterwarnings("ignore", category=UserWarning, module="mrinufft")
 
 np.int = int
@@ -49,8 +50,8 @@ PHANTOM_IDX = 0
 # ================================================================================
 SEQUENCES_DIR_PATH = r".\simulated\seq"
 VOLUMES_DIR_PATH = r".\simulated\brainmaps"
-PHANTOMS_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
+PHANTOMS_DIR_PATH = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -71,7 +72,7 @@ TE_FOR_DTI = TE_VALUES[0]  # use shortest TE for DTI (best SNR)
 TR = 5000  # [ms]
 ETL = 1  # echo train length (1 = conventional SE per shot)
 
-b_values = np.arange(0, 2001, 500, dtype=int)  # [s/mm²]
+b_values = np.arange(0, 2001, 100, dtype=int)  # [s/mm²]
 B_DIRS = 6
 small_delta = 0.018  # [s]
 big_DELTA = 0.03  # [s]
@@ -271,7 +272,7 @@ plt.show()
 def compute_trace_dwi(mag):
     """Geometric mean across diffusion directions. mag: (n_b, n_dirs, Ny, Nx).
 
-    Floor is data-scaled (not 1e-12) so that a single noise-floor voxel in
+    Floor is data-scaled so that a single noise-floor voxel in
     one direction at high b doesn't drag the geometric mean to ~0 and create
     a fake fast-decay (= falsely high ADC).
     """
@@ -306,7 +307,7 @@ print(
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
 titles = ["NLLS Fit", "Log-Linear Fit"]
 for i, adc in enumerate([adc_nlls, adc_ll]):
-    im = axs[i].imshow(np.fliplr(adc) * 1e3, cmap="viridis")
+    im = axs[i].imshow(adc * 1e3, cmap="viridis")
     axs[i].set_title(titles[i])
     axs[i].set_axis_off()
     fig.colorbar(im, ax=axs[i], label="ADC (x10⁻³ mm²/s)")
@@ -388,8 +389,8 @@ plt.show()
 
 # %%
 try:
-    np.save(rf"{VOLUMES_DIR_PATH}\ADC_multishot_se.npy", adc_nlls)
-    np.save(rf"{VOLUMES_DIR_PATH}\ADC_ref.npy", D)
+    np.save(rf"{VOLUMES_DIR_PATH}\ADC_multishot_se.npy", adc_nlls*1e3)  # save in x10⁻³ mm²/s units for easier comparison
+    np.save(rf"{VOLUMES_DIR_PATH}\ADC_ref.npy", np.rot90(D, 1))
     print("Saved ADC/DTI maps.")
 except Exception as e:
     print(f"Could not save: {e}")

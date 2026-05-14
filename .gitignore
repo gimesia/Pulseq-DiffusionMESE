@@ -2,7 +2,15 @@
 *.npy
 .nii.gz
 
+brainweb_phantoms/*
+
 simulation/phantoms/brainweb/*
+simulation/simulated/brainmaps/*
+simulation/simulated/diff_img/*
+simulation/simulated/t2_img/*
+simulation/simulated/seq/*
+simulation/simulated/topupADC/*
+simulation/simulated/topupT2/*
 
 # =======================================================================================
 # FROM TEMPLATE
@@ -228,4 +236,3 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-simulation/simulated/*

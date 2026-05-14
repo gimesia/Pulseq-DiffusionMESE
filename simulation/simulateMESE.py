@@ -38,6 +38,7 @@ from pypulseq import Sequence
 from mrinufft import get_operator
 
 from utils_simulation import *
+import phantom_loader
 
 np.int = int
 np.float = float
@@ -47,7 +48,7 @@ np.complex = complex
 #   Paths
 # =================================================================================
 SEQUENCES_DIR_PATH = rf"..\pulseq_diffusion_mese\seq_files"
-PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
+PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -70,40 +71,20 @@ tumor_size = (10, 10, 10)
 # %% ==============================================================================
 #   Load phantom
 # =================================================================================
-phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if f.endswith(".npz")]
+phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if "brainweb" in f]
 print("Available phantoms:", phantoms)
-phantom_path = os.path.join(PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX])
+phantom_path = os.path.join(
+    PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX], f"{phantoms[PHANTOM_IDX]}-3T.json"
+)
+print(f"Loading phantom from {phantom_path} ...")
 
-if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
-    phantom = mr0.VoxelGridPhantom.load(phantom_path)
-    print(f"Loaded phantom {os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}")
-    phantom = phantom.interpolate(NX, NY, NZ)
-    print(f"Resized phantom. Shape: {phantom.D.shape}")
-    phantom.voxel_size = torch.Tensor([0.00233, 0.00233, 0.00233])
-    vox = phantom.voxel_size
-
-    if add_tumor:
-        phantom = add_tumor_to_phantom(
-            phantom,
-            tumor_size=tumor_size,
-            tumor_location="bl",
-            adc_tumor_core=1.5,
-            adc_tumor_border=2.5,
-        )
-    phantom = phantom.slices([SLICE_IDX])
-    print(f"Selected slice. Shape: {phantom.D.shape}")
-else:
-    raise FileNotFoundError(f"Error: Invalid phantom file at {phantom_path}")
-
-PD = phantom.PD
-T1 = phantom.T1
-T2 = phantom.T2
+phantom, phantom_data = phantom_loader.load_phantom(
+    json_path=phantom_path,
+    resolution_mm=2.33,
+    slice_idx=None,
+)
 D = phantom.D
-B0 = phantom.B0
-B1 = phantom.B1
-
-phantom.plot()
-phantom_data = phantom.build()
+T2 = phantom.T2
 
 # %% ==============================================================================
 #   Load sequence  (DiffMESE only)
