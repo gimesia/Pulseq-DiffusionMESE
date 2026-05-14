@@ -1,10 +1,24 @@
 # IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
 # December 2024–November 2028, Grant Agreement No. 101169519).
 
-# %%
+# %% ================================================================================
+#  Imports
+# ===================================================================================
+import logging
+import warnings
 import os
 import sys
 import numpy as np
+import MRzeroCore as mr0
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+import nibabel as nib
+
+from pypulseq import Sequence
+
+import phantom_loader
+
 
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
@@ -13,20 +27,15 @@ seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
-# %% ================================================================================
-#  Imports
-# =================================================================================
-import MRzeroCore as mr0
-import numpy as np
-import torch
-import matplotlib.pyplot as plt
-import nibabel as nib
-
-from pypulseq import Sequence
+# %%
 from EPIDiffusionSEPulseqSeq import EPIDiffusionSEPulseqSeq
 from utils import SystemLimitType
 from utils_simulation import *
 from mrinufft import get_operator
+
+logger = logging.getLogger()
+logger.setLevel(logging.FATAL)  # Suppress INFO and WARNING
+warnings.filterwarnings("ignore", category=UserWarning, module="mrinufft")
 
 np.int = int
 np.float = float
@@ -34,14 +43,15 @@ np.complex = complex
 
 use_GPU = torch.cuda.is_available()
 
-BLIP_DOWN = True  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
+BLIP_DOWN = False  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
+PHANTOM_IDX = 0
 
 # =================================================================================
 #   Paths
 # =================================================================================
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
-VOLUMES_DIR_PATH = rf".\simulated\vol"
-PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
+VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
+PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
 ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
 
 
@@ -51,7 +61,65 @@ ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-D
 fov = 224e-3
 res = 2.33333333
 slice_thickness = res * 1e-3
-TEs = np.arange(65, 290, 5)  # From 70 to 410 with a step of 5
+# TEs = np.arange(65, 290, 5)  # From 70 to 410 with a step of 5
+TEs = np.array(
+    [
+        65,
+        70,
+        75,
+        80,
+        85,
+        90,
+        95,
+        100,
+        105,
+        110,
+        115,
+        120,
+        125,
+        127,
+        130,
+        132,
+        135,
+        137,
+        140,
+        142,
+        145,
+        147,
+        150,
+        152,
+        157,
+        162,
+        167,
+        172,
+        177,
+        182,
+        187,
+        189,
+        192,
+        194,
+        197,
+        199,
+        202,
+        204,
+        207,
+        209,
+        212,
+        214,
+        219,
+        224,
+        229,
+        234,
+        239,
+        244,
+        249,
+        254,
+        259,
+        264,
+        269,
+        274,
+    ], dtype=int
+)
 TR = 5000
 b_value = 0
 Nx = Ny = int(fov / slice_thickness)
@@ -60,48 +128,20 @@ Nx = Ny = int(fov / slice_thickness)
 # %% ==============================================================================
 #   Load phantom
 # =================================================================================
-PHANTOM_IDX = 4  # Select phantom index
-
-NZ = 10
-SLICE_IDX = 4  # Select slice index
-
-add_tumor = True
-tumor_size = (10, 10, 10)  # size of the tumor in voxels (x, y, z)
-
-
-phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if f.endswith(".npz")]
+phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if "brainweb" in f]
 print("Available phantoms:", phantoms)
-phantom_path = os.path.join(PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX])
+phantom_path = os.path.join(
+    PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX], f"{phantoms[PHANTOM_IDX]}-3T.json"
+)
+print(f"Loading phantom from {phantom_path} ...")
 
-
-if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
-    phantom = mr0.VoxelGridPhantom.load(phantom_path)  # Load phantom
-    print(f"Loaded phantom {os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}")
-
-    # Optionally add a tumor to the phantom
-    if add_tumor:
-        # typical brain tumor ADC values are around ~1.5 * 10^-3 mm^2/s,
-        # which lies between GM/WM and CSF (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3000221)
-        phantom = add_tumor_to_phantom(
-            phantom,
-            tumor_size=tumor_size,
-            tumor_location="br",
-            adc_tumor_core=1.5,
-            adc_tumor_border=2.5,  # 'tl', 'bl', 'tr', 'br' or (cx, cy, cz)
-        )
-    # Resize phantom, without padding
-    phantom = phantom.interpolate(Nx, Ny, NZ)
-    print(f"Resized phantom. Shape: {phantom.D.shape}")
-
-    # Select slice
-    phantom = phantom.slices([SLICE_IDX])  # Resize phantom, select slice
-    print(f"Selected slice. Shape: {phantom.D.shape}")
-
-else:
-    raise FileNotFoundError(f"Error: Invalid phantom file at {phantom_path}")
-
-# Build phantom
-phantom_data = phantom.build()  # Build phantom with specified voxel size (in mm)
+phantom, phantom_data = phantom_loader.load_phantom(
+    json_path=phantom_path,
+    resolution_mm=res,
+    slice_idx=None,
+)
+D = phantom.D
+T2 = phantom.T2
 
 
 # %% ================================================================================
@@ -111,6 +151,7 @@ nu_kspaces = []
 trajectories = []
 reconstructed_images = []
 for te in TEs:
+    print(f"Simulating for TE={te} ms ...")
     # =================================================================================
     #   Generate sequence
     # =================================================================================
@@ -135,6 +176,8 @@ for te in TEs:
         system_type=SystemLimitType.EXTRASAFE,
         calibration_readout=True,
         blip_down=BLIP_DOWN,
+        logger=logger,
+        fit_epi=True,
     )
 
     # Generate and write the sequence to a file
@@ -194,9 +237,9 @@ for te in TEs:
         )
     dir_signal = np.array(dir_signal)
 
-    print(f"Calibration signal shape: {calib_signal.shape}")
-    print(f"EPI signal shape: {epi_signal.shape}")
-    print(f"Directional signal shapes: {[e.shape for e in dir_signal]}")
+    # print(f"Calibration signal shape: {calib_signal.shape}")
+    # print(f"EPI signal shape: {epi_signal.shape}")
+    # print(f"Directional signal shapes: {[e.shape for e in dir_signal]}")
 
     nu_kspaces.append(dir_signal)
 
@@ -213,10 +256,10 @@ for te in TEs:
     # PyPulseq returns k in cycles/m; ramp samples may slightly exceed ±0.5 (expected)
     kx_norm = kx * fov / Nx
     ky_norm = ky * fov / Ny
-    print(
-        f"[k-traj] kx range: [{kx_norm.min():.4f}, {kx_norm.max():.4f}] "
-        f"(expected Nyquist ≈ ±0.5, ramp overshoot OK)"
-    )
+    # print(
+    #     f"[k-traj] kx range: [{kx_norm.min():.4f}, {kx_norm.max():.4f}] "
+    #     f"(expected Nyquist ≈ ±0.5, ramp overshoot OK)"
+    # )
 
     traj = np.stack([kx_norm, ky_norm], axis=-1)  # shape: (n_samples, 2)
     calibration_trajectory = traj[:samples_per_cal,]
@@ -227,8 +270,8 @@ for te in TEs:
         end_idx = (i + 1) * samples_per_dir
         direction_trajectories.append(direction_trajectory[start_idx:end_idx,])
     direction_trajectories = np.array(direction_trajectories)
-    print(f"Calibration trajectory shape: {calibration_trajectory.shape}")
-    print(f"Directional trajectory shapes: {[t.shape for t in direction_trajectories]}")
+    # print(f"Calibration trajectory shape: {calibration_trajectory.shape}")
+    # print(f"Directional trajectory shapes: {[t.shape for t in direction_trajectories]}")
 
     trajectories.append(direction_trajectories)
 
@@ -249,27 +292,26 @@ for te in TEs:
     )
     sig = dir_signal[i]
     sig = torch.from_numpy(sig).to(torch.complex64)  # Convert to PyTorch tensor
-    print(f"Signal shape for direction {i+1}: {sig.shape}, dtype: {sig.dtype}")
+    # print(f"Signal shape for direction {i+1}: {sig.shape}, dtype: {sig.dtype}")
     img_complex = nufft_op.adj_op(sig.flatten())  # shape: (1, Ny, Nx) if n_coils=1
     img_complex = img_complex.squeeze().cpu().numpy()  # (Ny, Nx)
-    
+
     mag_img = np.abs(img_complex)
-    print(
-        f"Reconstructed image shape for direction {i+1}: {img_complex.shape}, dtype: {img_complex.dtype}"
-    )
-    
+    # print(
+    #     f"Reconstructed image shape for direction {i+1}: {img_complex.shape}, dtype: {img_complex.dtype}"
+    # )
+
     nii_path = os.path.join(ECHO_IMAGES_DIR_PATH, f"{name}.nii.gz")
-    affine = np.array([
-        [res, 0, 0, 0],
-        [0, res, 0, 0],
-        [0, 0, res, 0],
-        [0, 0, 0, 1]
-    ])
-    nib.save(nib.Nifti1Image(np.asarray(mag_img, dtype=np.float32), affine=affine), nii_path)
+    affine = np.array([[res, 0, 0, 0], [0, res, 0, 0], [0, 0, res, 0], [0, 0, 0, 1]])
+    nib.save(
+        nib.Nifti1Image(np.asarray(mag_img, dtype=np.float32), affine=affine), nii_path
+    )
 
-    recon.append(img_complex)  # Move to CPU and convert to NumPy        
+    recon.append(img_complex)  # Move to CPU and convert to NumPy
     reconstructed_images.append(recon)
-
+    print(
+        "=================================================================================="
+    )
 print("Sequence generation complete.")
 # %%
 for dir_idx, dir in enumerate(seq.b_directions):
@@ -298,7 +340,9 @@ reconstructed_b0_magnitude_images = np.abs(
     reconstructed_b0_images
 )  # Take magnitude for T2 fitting
 
-# %%
+# %% ==============================================================================
+#   T2 fitting
+# =================================================================================
 from utils_relaxometry import create_t2_map
 
 ims = []
@@ -313,27 +357,13 @@ for i, ax in enumerate(axs):
     ax.set_title(titles[i])
     fig.colorbar(im, ax=ax, label="T2 (ms)")
 
-
-# %%
-ref = mr0.VoxelGridPhantom.load(rf"{PHANTOMS_DIR_PATH}\{phantoms[PHANTOM_IDX]}")
-max_dim = max(ref.D.shape)
-ref.D = pad_to_cube(ref.D, max_dim)
-ref.T2 = pad_to_cube(ref.T2, max_dim)
-ref.T2dash = pad_to_cube(ref.T2dash, max_dim)
-ref.T1 = pad_to_cube(ref.T1, max_dim)
-ref.PD = pad_to_cube(ref.PD, max_dim)
-ref.B0 = pad_to_cube(ref.B0, max_dim)
-ref.B1 = pad_to_cube(ref.B1, max_dim)
-
-ref = ref.interpolate(Nx, Ny, NZ).slices([SLICE_IDX])
-ref.plot()
-
-# %%
-
+# %% ==============================================================================
+#   Comparison: Single SE T2 maps vs reference
+# =================================================================================
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
 titles = ["NLLS Fit", "Log-Linear Fit", "Reference T2 Map"]
 
-ims2 = [*ims, ref.T2]
+ims2 = [*ims, T2]
 for i, ax in enumerate(axs):
     if i < 2:
         im = np.rot90(ims2[i], -1)
@@ -341,16 +371,16 @@ for i, ax in enumerate(axs):
     else:
         im = np.rot90(ims2[i], 1)
     ims2[i] = im  # save for later
-    im = ax.imshow(im, cmap="viridis")
+    im = ax.imshow(im, cmap="viridis", vmax=1.6)
     ax.set_title(titles[i])
     fig.colorbar(im, ax=ax, label="T2 (s)")
 
 
-
 # %%
 try:
-    np.save(f"simulated/vol/T2_SSE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0])
-    np.save("simulated/vol/T2_ref.npy", ims2[2])
+    np.save(
+        f"simulated/vol/T2_SSE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0]
+    )
 except Exception:
     pass
 # %%

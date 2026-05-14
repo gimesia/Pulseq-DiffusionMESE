@@ -105,7 +105,7 @@ class EPIDiffusionTripleSEPulseqSeq(PulseqSeq):
         simultan_rephasers: bool = True,
         blip_down: bool = True,
         alternating_blip_polarity: bool = False,
-        ramp_sampling: str = "none",  # 'none', 'optimized', 'ramp_sampled'
+        ramp_sampling: str = "ramp_sampled",  # 'none', 'optimized', 'ramp_sampled'
         save_dir: str = DEFAULT_SAVE_DIR,
         logger: logging.Logger = None,
         partial_fourier_factor: float = 1.0,

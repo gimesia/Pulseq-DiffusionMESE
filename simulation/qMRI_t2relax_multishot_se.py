@@ -1,41 +1,56 @@
 # IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
 # December 2024–November 2028, Grant Agreement No. 101169519).
 
-# %%
+# %% ================================================================================
+#  Imports
+# ===================================================================================
+import logging
+import warnings
 import os
 import sys
 import numpy as np
-import warnings
+import MRzeroCore as mr0
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+import nibabel as nib
 
-warnings.filterwarnings("ignore", category=UserWarning)
+from pypulseq import Sequence
 
+import phantom_loader
+
+
+# The path to the pulseq-diffusion-mese directory.
+# TODO: It is advisable to replace this with a more robust method for path management,
+# such as using environment variables or a configuration file.
 seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
-# %% ================================================================================
-#   Imports
-# ================================================================================
-import MRzeroCore as mr0
-import torch
-import matplotlib.pyplot as plt
-
+# %%
 from SEMultishotPulseqSeq import SEMultishotPulseqSeq
-from utils import SystemLimitType, fft_reconstruct_image
-from utils_simulation import add_tumor_to_phantom, pad_to_cube
+from utils import SystemLimitType
+from utils_simulation import *
+from mrinufft import get_operator
+
+logger = logging.getLogger()
+logger.setLevel(logging.FATAL)  # Suppress INFO and WARNING
+warnings.filterwarnings("ignore", category=UserWarning, module="mrinufft")
 
 np.int = int
 np.float = float
 np.complex = complex
 
 use_GPU = torch.cuda.is_available()
+PHANTOM_IDX = 0
 
 # ================================================================================
 #   Paths
 # ================================================================================
 SEQUENCES_DIR_PATH = r".\simulated\seq"
-VOLUMES_DIR_PATH = r".\simulated\vol"
-PHANTOMS_DIR_PATH = r".\phantoms\brainweb"
+VOLUMES_DIR_PATH = r".\simulated\brainmaps"
+PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -43,53 +58,93 @@ PHANTOMS_DIR_PATH = r".\phantoms\brainweb"
 fov = 224e-3
 res = 2.33333333
 slice_thickness = res * 1e-3
-TEs = np.arange(80, 200, 10)   # ms — 12 TE values
+# TEs = np.arange(65, 200, 5)  # ms — 12 TE values
+TEs = np.array(
+    [
+        65,
+        70,
+        75,
+        80,
+        85,
+        90,
+        95,
+        100,
+        105,
+        110,
+        115,
+        120,
+        125,
+        127,
+        130,
+        132,
+        135,
+        137,
+        140,
+        142,
+        145,
+        147,
+        150,
+        152,
+        157,
+        162,
+        167,
+        172,
+        177,
+        182,
+        187,
+        189,
+        192,
+        194,
+        197,
+        199,
+        202,
+        204,
+        207,
+        209,
+        212,
+        214,
+        219,
+        224,
+        229,
+        234,
+        239,
+        244,
+        249,
+        254,
+        259,
+        264,
+        269,
+        274,
+    ], dtype=int
+)
 TR = 5000
-ETL = 1                       # echo train length; scan time = (Ny/ETL) × TR per TE
+ETL = 1  # echo train length
 Nx = Ny = int(fov / slice_thickness)
 
 N_shots = Ny // ETL
 print(
-    f"Matrix: {Ny}×{Nx}  ETL={ETL}  N_shots per TE={N_shots}  "
+    f"Matrix: {Ny}x{Nx}  ETL={ETL}  N_shots per TE={N_shots}  "
     f"Total TRs for all TEs: {len(TEs) * N_shots}  "
     f"(vs {len(TEs) * Ny} for ETL=1 — {ETL}× faster)"
 )
 
 # %% ==============================================================================
 #   Load phantom
-# ==============================================================================
-PHANTOM_IDX = 4
-NZ = 10
-SLICE_IDX = 4
-
-add_tumor = True
-tumor_size = (10, 10, 10)
-
-phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if f.endswith(".npz")]
+# =================================================================================
+phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if "brainweb" in f]
 print("Available phantoms:", phantoms)
-phantom_path = os.path.join(PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX])
+phantom_path = os.path.join(
+    PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX], f"{phantoms[PHANTOM_IDX]}-3T.json"
+)
+print(f"Loading phantom from {phantom_path} ...")
 
-if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
-    phantom = mr0.VoxelGridPhantom.load(phantom_path)
-    print(f"Loaded phantom {os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}")
-
-    if add_tumor:
-        phantom = add_tumor_to_phantom(
-            phantom,
-            tumor_size=tumor_size,
-            tumor_location="br",
-            adc_tumor_core=1.5,
-            adc_tumor_border=2.5,
-        )
-    phantom = phantom.interpolate(Nx, Ny, NZ)
-    print(f"Resized phantom. Shape: {phantom.D.shape}")
-
-    phantom = phantom.slices([SLICE_IDX])
-    print(f"Selected slice. Shape: {phantom.D.shape}")
-else:
-    raise FileNotFoundError(f"Error: Invalid phantom file at {phantom_path}")
-
-phantom_data = phantom.build()
+phantom, phantom_data = phantom_loader.load_phantom(
+    json_path=phantom_path,
+    resolution_mm=res,
+    slice_idx=None,
+)
+D = phantom.D
+T2 = phantom.T2
 
 # %% ================================================================================
 #   Main simulation loop
@@ -98,9 +153,10 @@ phantom_data = phantom.build()
 # the Cartesian k-space, and reconstruct with a plain inverse FFT.
 # No NUFFT is needed because the readout is a conventional Cartesian gradient echo.
 # ================================================================================
-reconstructed_images = []   # (n_TEs,) list of (Ny, Nx) magnitude images
+reconstructed_images = []  # (n_TEs,) list of (Ny, Nx) magnitude images
 
 for te in TEs:
+    print(f"Simulating for TE={te} ms ...")
     # ============================================================================
     #   Build sequence
     # ============================================================================
@@ -116,6 +172,7 @@ for te in TEs:
         save_dir=SEQUENCES_DIR_PATH,
         v141_compat=True,
         system_type=SystemLimitType.EXTRASAFE,
+        logger=logger,
     )
     seq.build_seq()
     seq.write()
@@ -175,7 +232,7 @@ for i, img in enumerate(reconstructed_images):
     axs[i].imshow(np.rot90(img, -1), cmap="gray")
     axs[i].set_title(f"TE={TEs[i]} ms")
     axs[i].set_axis_off()
-for ax in axs[len(TEs):]:
+for ax in axs[len(TEs) :]:
     ax.set_visible(False)
 plt.tight_layout()
 plt.show()
@@ -185,7 +242,7 @@ plt.show()
 # ==============================================================================
 from utils_relaxometry import create_t2_map
 
-images_stack = np.array(reconstructed_images)   # (n_TEs, Ny, Nx)
+images_stack = np.array(reconstructed_images)  # (n_TEs, Ny, Nx)
 print(f"Images stack: {images_stack.shape}  TEs: {TEs}")
 
 ims = []
@@ -206,21 +263,6 @@ plt.tight_layout()
 plt.show()
 
 # %% ==============================================================================
-#   Reference phantom comparison
-# ==============================================================================
-ref = mr0.VoxelGridPhantom.load(rf"{PHANTOMS_DIR_PATH}\{phantoms[PHANTOM_IDX]}")
-max_dim = max(ref.D.shape)
-ref.D = pad_to_cube(ref.D, max_dim)
-ref.T2 = pad_to_cube(ref.T2, max_dim)
-ref.T2dash = pad_to_cube(ref.T2dash, max_dim)
-ref.T1 = pad_to_cube(ref.T1, max_dim)
-ref.PD = pad_to_cube(ref.PD, max_dim)
-ref.B0 = pad_to_cube(ref.B0, max_dim)
-ref.B1 = pad_to_cube(ref.B1, max_dim)
-ref = ref.interpolate(Nx, Ny, NZ).slices([SLICE_IDX])
-ref.plot()
-
-# %% ==============================================================================
 #   Final comparison plot
 # ==============================================================================
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
@@ -231,7 +273,7 @@ fig.suptitle(
     f"[{ETL}× fewer shots]"
 )
 titles = ["NLLS Fit", "Log-Linear Fit", "Reference T2 map"]
-ims2 = [*ims, ref.T2]
+ims2 = [*ims, T2]
 for i, ax in enumerate(axs):
     if i < 2:
         im_data = np.rot90(ims2[i], 0) / 1000
@@ -239,7 +281,10 @@ for i, ax in enumerate(axs):
     else:
         im_data = np.rot90(ims2[i], 1)
     ims2[i] = im_data  # save for later
-    im = ax.imshow(im_data, cmap="viridis",)
+    im = ax.imshow(
+        im_data,
+        cmap="viridis",
+    )
     ax.set_title(titles[i])
     ax.set_axis_off()
     fig.colorbar(im, ax=ax, label="T2 (s)")
@@ -249,7 +294,7 @@ plt.show()
 # %%
 try:
     np.save(rf"{VOLUMES_DIR_PATH}\T2_multishot_se.npy", ims2[0])
-    np.save(rf"{VOLUMES_DIR_PATH}\T2_ref.npy", np.rot90(ims2[2], 2))
+    np.save(rf"{VOLUMES_DIR_PATH}\T2_ref.npy", np.rot90(ims2[2], 0))
     print("Saved T2 maps.")
 except Exception as e:
     print(f"Could not save: {e}")

@@ -1,14 +1,24 @@
 # IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
 # December 2024–November 2028, Grant Agreement No. 101169519).
-# Triple SE diffusion simulation and ADC fitting
 
-# %%
+# %% ================================================================================
+#  Imports
+# ===================================================================================
+import logging
+import warnings
 import os
 import sys
 import numpy as np
-import warnings
+import MRzeroCore as mr0
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+import nibabel as nib
 
-warnings.filterwarnings("ignore", category=UserWarning, module="mrinufft")
+from pypulseq import Sequence
+
+import phantom_loader
+
 
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
@@ -17,31 +27,32 @@ seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
-# %% ================================================================================
-#  Imports
-# =================================================================================
-import MRzeroCore as mr0
-import torch
-import matplotlib.pyplot as plt
-
+# %%
 from EPIDiffusionTripleSEPulseqSeq import EPIDiffusionTripleSEPulseqSeq
 from utils import SystemLimitType
 from utils_simulation import *
 from mrinufft import get_operator
-import torch.nn.functional as F
+
+logger = logging.getLogger()
+logger.setLevel(logging.FATAL)  # Suppress INFO and WARNING
+warnings.filterwarnings("ignore", category=UserWarning, module="mrinufft")
 
 np.int = int
 np.float = float
 np.complex = complex
 
 use_GPU = torch.cuda.is_available()
+B_DIRS = 12
+BLIP_DOWN = False
+PHANTOM_IDX = 0
 
 # =================================================================================
 #   Paths
 # =================================================================================
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
-VOLUMES_DIR_PATH = rf".\simulated\vol"
-PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
+VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
+PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -57,51 +68,28 @@ slice_thickness = res * 1e-3
 TE1 = 100  # [ms]
 
 # Vary b-values instead of TEs. Matches qMRI_adc.py exactly.
-b_values = np.arange(0, 2301, 150)  # [s/mm^2]  — matches qMRI_adc.py
+b_values = np.arange(0, 2001, 100, dtype=int)  # [s/mm^2]  — matches qMRI_adc.py
 
 TR = 5000
-B_DIRS = 3
-BLIP_DOWN = True
 Nx = Ny = int(fov / slice_thickness)
 
 # %% ==============================================================================
 #   Load phantom
 # =================================================================================
-PHANTOM_IDX = 4
-NZ = 10
-SLICE_IDX = 4
-add_tumor = True
-tumor_size = (20, 20, 20)
-
-phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if f.endswith(".npz")]
+phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if "brainweb" in f]
 print("Available phantoms:", phantoms)
-phantom_path = os.path.join(PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX])
+phantom_path = os.path.join(
+    PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX], f"{phantoms[PHANTOM_IDX]}-3T.json"
+)
+print(f"Loading phantom from {phantom_path} ...")
 
-if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
-    phantom = mr0.VoxelGridPhantom.load(phantom_path)
-    print(
-        f"Loaded phantom |{os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}"
-    )
-
-    if add_tumor:
-        phantom = add_tumor_to_phantom(
-            phantom,
-            tumor_size=tumor_size,
-            tumor_location="br",
-            adc_tumor_core=1.5,
-            adc_tumor_border=2.5,
-        )
-    phantom.plot()
-
-    phantom = phantom.interpolate(Nx, Ny, NZ)
-    print(f"Resized phantom. Shape: {phantom.D.shape}")
-
-    phantom = phantom.slices([SLICE_IDX])
-    print(f"Selected slice. Shape: {phantom.D.shape}")
-else:
-    raise FileNotFoundError(f"Error: Invalid phantom file at {phantom_path}")
-
-phantom_data = phantom.build()
+phantom, phantom_data = phantom_loader.load_phantom(
+    json_path=phantom_path,
+    resolution_mm=res,
+    slice_idx=None,
+)
+D = phantom.D
+T2 = phantom.T2
 
 # %% ================================================================================
 #   Pre-loop containers
@@ -114,6 +102,7 @@ te1_ms = te2_ms = te3_ms = None  # read once from the first iteration
 #   Main loop: sweep b-values, acquire triple SE per b-value
 # ================================================================================
 for b_value in b_values:
+    print(f"Simulating sequence | b={b_value} s/mm² | TE={te1_ms} ms")
     # =================================================================================
     #   Generate sequence
     # =================================================================================
@@ -138,11 +127,11 @@ for b_value in b_values:
         system_type=SystemLimitType.EXTRASAFE,
         calibration_readout=True,
         blip_down=BLIP_DOWN,
-        ramp_sampling="ramp_sampled",
         uniform_spoiler_directions=False,
         uniform_spoiler_areas=False,
         phase_cycling=True,
         partial_fourier_factor=1,
+        logger=logger,
     )
     seq.write()
 
@@ -162,6 +151,7 @@ for b_value in b_values:
     #   Simulate sequence
     # =================================================================================
     seq0 = mr0.Sequence.import_file(rf"{SEQUENCES_DIR_PATH}\{name}.seq")
+
     if use_GPU:
         seq0_gpu = seq0.cuda()
         phantom_data_gpu = phantom_data.cuda()
@@ -243,10 +233,10 @@ for b_value in b_values:
     k_traj_adc, k_traj, _, _, t_adc = seq.seq.calculate_kspace()
     kx_norm = k_traj_adc[0] * fov / Nx
     ky_norm = k_traj_adc[1] * fov / Ny
-    print(
-        f"  [k-traj] kx range: [{kx_norm.min():.4f}, {kx_norm.max():.4f}] "
-        f"(expected Nyquist ≈ ±0.5, ramp overshoot OK)"
-    )
+    # print(
+    #     f"  [k-traj] kx range: [{kx_norm.min():.4f}, {kx_norm.max():.4f}] "
+    #     f"(expected Nyquist ≈ ±0.5, ramp overshoot OK)"
+    # )
     traj = np.stack([kx_norm, ky_norm], axis=-1)
 
     d0 = samples_per_cal
@@ -294,7 +284,22 @@ for b_value in b_values:
         dir_echo_images.append(np.stack(imgs, axis=0))  # (3, Ny, Nx)
 
     all_echo_images.append(np.stack(dir_echo_images, axis=0))  # (n_dirs, 3, Ny, Nx)
-    print(f"  Reconstructed b={b_value}: {all_echo_images[-1].shape}")
+    # print(f"  Reconstructed b={b_value}: {all_echo_images[-1].shape}")
+
+    affine = np.array([[res, 0, 0, 0], [0, res, 0, 0], [0, 0, res, 0], [0, 0, 0, 1]])
+    for d in range(n_dirs):
+        for echo_idx, te_ms_echo in enumerate([te1_ms, te2_ms, te3_ms]):
+            mag_img = np.abs(dir_echo_images[d][echo_idx])  # (Ny, Nx)
+            echo_name = f"b{int(b_value)}-dir{d}-TE{int(te_ms_echo)}-{'blipdown' if BLIP_DOWN else 'blipup'}"
+            nii_path = os.path.join(ECHO_IMAGES_DIR_PATH, f"{echo_name}.nii.gz")
+            nib.save(
+                nib.Nifti1Image(
+                    np.asarray(mag_img[:, :, np.newaxis], dtype=np.float32),
+                    affine=affine,
+                ),
+                nii_path,
+            )
+
 
 print("Simulation loop complete.")
 
@@ -345,7 +350,7 @@ def compute_trace_dwi(mag):
     return np.exp(np.mean(np.log(mag + eps), axis=1))
 
 
-trace_dwi = compute_trace_dwi(mag_images_combined)  # (n_b, Ny, Nx)
+trace_dwi = compute_trace_dwi(mag_echo1)  # (n_b, Ny, Nx)
 print(f"Trace DWI shape (all echoes combined): {trace_dwi.shape}")
 
 # %% ==============================================================================
@@ -378,33 +383,6 @@ plt.tight_layout()
 plt.show()
 
 # %% ==============================================================================
-#   Reference phantom
-# =================================================================================
-ref = mr0.VoxelGridPhantom.load(rf"{PHANTOMS_DIR_PATH}\{phantoms[PHANTOM_IDX]}")
-
-ref = add_tumor_to_phantom(
-    ref,
-    tumor_size=tumor_size,
-    tumor_location="br",
-    adc_tumor_core=1.5,
-    adc_tumor_border=2.5,
-)
-
-max_dim = max(ref.D.shape)
-ref.D = pad_to_cube(ref.D, max_dim)
-ref.T2 = pad_to_cube(ref.T2, max_dim)
-ref.T2dash = pad_to_cube(ref.T2dash, max_dim)
-ref.T1 = pad_to_cube(ref.T1, max_dim)
-ref.PD = pad_to_cube(ref.PD, max_dim)
-ref.B0 = pad_to_cube(ref.B0, max_dim)
-ref.B1 = pad_to_cube(ref.B1, max_dim)
-
-ref = ref.interpolate(Nx, Ny, NZ)
-
-ref = ref.slices([SLICE_IDX])
-ref.plot()
-
-# %% ==============================================================================
 #   ADC vs reference comparison (all echoes combined)
 # =================================================================================
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
@@ -417,10 +395,10 @@ ims_data = [
         "ADC (x10⁻³ mm²/s)",
         "viridis",
     ),
-    (np.rot90(ref.D, 1), "Reference D map", "D (x10⁻³ mm²/s)", "viridis"),
+    (np.rot90(D, 1), "Reference D map", "D (x10⁻³ mm²/s)", "viridis"),
 ]
 for ax, (im_data, title, label, cmap) in zip(axs, ims_data):
-    im = ax.imshow(im_data, cmap=cmap)
+    im = ax.imshow(im_data, cmap=cmap, vmax=3.1)  # ADC values are typically in the range of 0-3 x10⁻³ mm²/s
     ax.set_title(title)
     ax.set_axis_off()
     fig.colorbar(im, ax=ax, label=label)
@@ -431,23 +409,6 @@ plt.show()
 #   Diffusion tensor fit → FA and MD (all echoes combined)
 # =================================================================================
 from utils_diffusion import create_dti_maps  # noqa: E402
-
-# Add before create_dti_maps in BOTH scripts
-arr = mag_images_combined  # or reconstructed_magnitude_images for single SE
-print(f"Shape: {arr.shape}")
-print(f"b=0 mean across brain: {arr[0].mean():.4f}")
-print(f"b=1500 mean across brain: {arr[10].mean():.4f}")
-print(f"Ratio b1500/b0: {arr[10].mean()/arr[0].mean():.4f}")
-# Check direction spread — this is what FA depends on
-b0_dirs = arr[0]  # (n_dirs, Ny, Nx)
-print(f"Direction std at b=0 (should be ~0): {b0_dirs.std(axis=0).mean():.6f}")
-b1500_dirs = arr[10]  # (n_dirs, Ny, Nx)
-print(f"Direction std at b=1500: {b1500_dirs.std(axis=0).mean():.6f}")
-print(f"Direction std ratio b1500/b0: {b1500_dirs.std(axis=0).mean()/b0_dirs.std(axis=0).mean():.4f}")
-
-
-
-
 
 fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
     mag_images_combined,  # (n_b, n_dirs, Ny, Nx)

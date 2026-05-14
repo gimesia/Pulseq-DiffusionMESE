@@ -1,41 +1,56 @@
 # IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
 # December 2024–November 2028, Grant Agreement No. 101169519).
 
-# %%
+# %% ================================================================================
+#  Imports
+# ===================================================================================
+import logging
+import warnings
 import os
 import sys
 import numpy as np
-import warnings
+import MRzeroCore as mr0
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+import nibabel as nib
 
-warnings.filterwarnings("ignore", category=UserWarning)
+from pypulseq import Sequence
 
+import phantom_loader
+
+
+# The path to the pulseq-diffusion-mese directory.
+# TODO: It is advisable to replace this with a more robust method for path management,
+# such as using environment variables or a configuration file.
 seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
-# %% ================================================================================
-#   Imports
-# ================================================================================
-import MRzeroCore as mr0
-import torch
-import matplotlib.pyplot as plt
-
+# %%
 from DiffusionSEMultishotPulseqSeq import DiffusionSEMultishotPulseqSeq
-from utils import SystemLimitType, fft_reconstruct_image
-from utils_simulation import add_tumor_to_phantom, pad_to_cube
+from utils import SystemLimitType
+from utils_simulation import *
+from mrinufft import get_operator
+
+logger = logging.getLogger()
+logger.setLevel(logging.FATAL)  # Suppress INFO and WARNING
+warnings.filterwarnings("ignore", category=UserWarning, module="mrinufft")
 
 np.int = int
 np.float = float
 np.complex = complex
 
 use_GPU = torch.cuda.is_available()
+PHANTOM_IDX = 0
 
 # ================================================================================
 #   Paths
 # ================================================================================
 SEQUENCES_DIR_PATH = r".\simulated\seq"
-VOLUMES_DIR_PATH = r".\simulated\vol"
-PHANTOMS_DIR_PATH = r".\phantoms\brainweb"
+VOLUMES_DIR_PATH = r".\simulated\brainmaps"
+PHANTOMS_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -49,15 +64,17 @@ slice_thickness = res * 1e-3
 # ln S = ln S0 - b * g^T D g assumes a single TE; mixing TEs makes S0 a function
 # of b-index (because high-b acquisitions weight differently across TEs via SNR),
 # which biases the tensor fit and inflates spurious FA.
-TE_VALUES = [100,]# 150, 200]         # [ms] — three echo times
-TE_FOR_DTI = TE_VALUES[0]           # use shortest TE for DTI (best SNR)
-TR = 5000                           # [ms]
-ETL = 1                             # echo train length (1 = conventional SE per shot)
+TE_VALUES = [
+    100,
+]  # 150, 200]         # [ms] — three echo times
+TE_FOR_DTI = TE_VALUES[0]  # use shortest TE for DTI (best SNR)
+TR = 5000  # [ms]
+ETL = 1  # echo train length (1 = conventional SE per shot)
 
-b_values = np.arange(0, 2301, 150)  # [s/mm²]
-B_DIRS = 3                         # 12 directions → full-rank, well-conditioned tensor fit
-small_delta = 0.018                 # [s]
-big_DELTA = 0.03                    # [s]
+b_values = np.arange(0, 2001, 100, dtype=int)  # [s/mm²]
+B_DIRS = 12  # 12 directions → full-rank, well-conditioned tensor fit
+small_delta = 0.018  # [s]
+big_DELTA = 0.03  # [s]
 
 Nx = Ny = int(fov / slice_thickness)
 N_shots = Ny // ETL
@@ -71,38 +88,20 @@ print(
 # %% ==============================================================================
 #   Load phantom
 # ==============================================================================
-PHANTOM_IDX = 4
-NZ = 10
-SLICE_IDX = 4
-
-add_tumor = True
-tumor_size = (20, 20, 20)
-
-phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if f.endswith(".npz")]
+phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if "brainweb" in f]
 print("Available phantoms:", phantoms)
-phantom_path = os.path.join(PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX])
+phantom_path = os.path.join(
+    PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX], f"{phantoms[PHANTOM_IDX]}-3T.json"
+)
+print(f"Loading phantom from {phantom_path} ...")
 
-if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
-    phantom = mr0.VoxelGridPhantom.load(phantom_path)
-    print(f"Loaded phantom {os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}")
-
-    if add_tumor:
-        phantom = add_tumor_to_phantom(
-            phantom,
-            tumor_size=tumor_size,
-            tumor_location="br",
-            adc_tumor_core=1.5,
-            adc_tumor_border=2.5,
-        )
-    phantom.plot()
-    phantom = phantom.interpolate(Nx, Ny, NZ)
-    print(f"Resized phantom. Shape: {phantom.D.shape}")
-    phantom = phantom.slices([SLICE_IDX])
-    print(f"Selected slice. Shape: {phantom.D.shape}")
-else:
-    raise FileNotFoundError(f"Error: Invalid phantom file at {phantom_path}")
-
-phantom_data = phantom.build()
+phantom, phantom_data = phantom_loader.load_phantom(
+    json_path=phantom_path,
+    resolution_mm=res,
+    slice_idx=None,
+)
+D = phantom.D
+T2 = phantom.T2
 
 # %% ================================================================================
 #   Main simulation loop: sweep TEs × b-values
@@ -138,7 +137,8 @@ for te in TE_VALUES:
             big_DELTA=big_DELTA,
             save_dir=SEQUENCES_DIR_PATH,
             v141_compat=True,
-            system_type=SystemLimitType.SAFE,
+            system_type=SystemLimitType.EXTRASAFE,
+            logger=logger,
         )
         seq.build_seq()
         seq.write()
@@ -167,7 +167,9 @@ for te in TE_VALUES:
         else:
             phantom_data_cpu = phantom_data.cpu()
             graph = mr0.compute_graph(seq0, phantom_data_cpu, 5000, 1e-5)
-            signal = mr0.execute_graph(graph, seq0, phantom_data_cpu, print_progress=False)
+            signal = mr0.execute_graph(
+                graph, seq0, phantom_data_cpu, print_progress=False
+            )
 
         # Clean up GPU memory
         if seq0_gpu is not None:
@@ -177,9 +179,9 @@ for te in TE_VALUES:
         if use_GPU:
             torch.cuda.empty_cache()
 
-        assert signal.shape[0] == n_dirs * Ny * Nx, (
-            f"Signal length mismatch: expected {n_dirs * Ny * Nx}, got {signal.shape[0]}"
-        )
+        assert (
+            signal.shape[0] == n_dirs * Ny * Nx
+        ), f"Signal length mismatch: expected {n_dirs * Ny * Nx}, got {signal.shape[0]}"
 
         # ============================================================================
         #   Reconstruct per direction (Cartesian iFFT)
@@ -205,11 +207,11 @@ stacked = np.stack(
 )  # (n_te, n_b, n_dirs, Ny, Nx)
 
 # ADC: average across TEs (T2 cancels in S(b)/S(0) ratio)
-mag_images_adc = np.abs(stacked.mean(axis=0))         # (n_b, n_dirs, Ny, Nx)
+mag_images_adc = np.abs(stacked.mean(axis=0))  # (n_b, n_dirs, Ny, Nx)
 
 # DTI: use only the shortest TE (single-TE log-linear model, highest SNR)
 te_idx_dti = TE_VALUES.index(TE_FOR_DTI)
-mag_images_dti = np.abs(stacked[te_idx_dti])          # (n_b, n_dirs, Ny, Nx)
+mag_images_dti = np.abs(stacked[te_idx_dti])  # (n_b, n_dirs, Ny, Nx)
 
 print(f"mag_images_adc shape (TE-averaged): {mag_images_adc.shape}")
 print(f"mag_images_dti shape (TE={TE_FOR_DTI} ms only): {mag_images_dti.shape}")
@@ -222,7 +224,7 @@ print(f"mag_images_dti shape (TE={TE_FOR_DTI} ms only): {mag_images_dti.shape}")
 # artefact (e.g., residual eddy currents, timing mismatch between Gdiff axes) that
 # will corrupt the tensor fit at b > 0.
 b0_idx = int(np.argmin(b_values))
-b0_per_dir = mag_images_dti[b0_idx]                   # (n_dirs, Ny, Nx)
+b0_per_dir = mag_images_dti[b0_idx]  # (n_dirs, Ny, Nx)
 b0_mean = b0_per_dir.mean(axis=0)
 brain_mask_b0 = b0_mean > 0.1 * b0_mean.max()
 
@@ -230,7 +232,9 @@ print("\n=== b=0 direction consistency check ===")
 for d in range(n_dirs):
     rel_diff = (b0_per_dir[d] - b0_mean) / (b0_mean + 1e-9)
     rms = np.sqrt(np.mean(rel_diff[brain_mask_b0] ** 2))
-    print(f"  dir {d} ({last_seq.b_directions[d]}): RMS relative diff vs mean = {rms*100:.3f}%")
+    print(
+        f"  dir {d} ({last_seq.b_directions[d]}): RMS relative diff vs mean = {rms*100:.3f}%"
+    )
 print("If any RMS > ~1% the sequence has direction-dependent artefacts at b=0.\n")
 
 # %% ==============================================================================
@@ -272,7 +276,7 @@ def compute_trace_dwi(mag):
     return np.exp(np.mean(np.log(mag + eps), axis=1))
 
 
-trace_dwi = compute_trace_dwi(mag_images_adc)   # (n_b, Ny, Nx)
+trace_dwi = compute_trace_dwi(mag_images_adc)  # (n_b, Ny, Nx)
 print(f"Trace DWI shape: {trace_dwi.shape}")
 
 # %% ==============================================================================
@@ -316,9 +320,9 @@ plt.show()
 from utils_diffusion import create_dti_maps  # noqa: E402
 
 fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
-    mag_images_dti,           # (n_b, n_dirs, Ny, Nx) — single TE only
+    mag_images_dti,  # (n_b, n_dirs, Ny, Nx) — single TE only
     b_values,
-    last_seq.b_directions,    # (n_dirs, 3) unit vectors
+    last_seq.b_directions,  # (n_dirs, 3) unit vectors
 )
 
 # Report distribution rather than just min/max — easier to spot noise-floor FA
@@ -364,33 +368,12 @@ plt.show()
 # %% ==============================================================================
 #   Reference phantom comparison (ADC)
 # ==============================================================================
-ref = mr0.VoxelGridPhantom.load(rf"{PHANTOMS_DIR_PATH}\{phantoms[PHANTOM_IDX]}")
-max_dim = max(ref.D.shape)
-if add_tumor:
-    ref = add_tumor_to_phantom(
-        ref,
-        tumor_size=tumor_size,
-        tumor_location="br",
-        adc_tumor_core=1.5,
-        adc_tumor_border=2.5,
-    )
-ref.D = pad_to_cube(ref.D, max_dim)
-ref.T2 = pad_to_cube(ref.T2, max_dim)
-ref.T2dash = pad_to_cube(ref.T2dash, max_dim)
-ref.T1 = pad_to_cube(ref.T1, max_dim)
-ref.PD = pad_to_cube(ref.PD, max_dim)
-ref.B0 = pad_to_cube(ref.B0, max_dim)
-ref.B1 = pad_to_cube(ref.B1, max_dim)
-
-ref = ref.interpolate(Nx, Ny, NZ).slices([SLICE_IDX])
-ref.plot()
-
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
 fig.suptitle("Diffusion SE Multishot ADC vs Reference")
 ims_data = [
     (np.fliplr(adc_nlls) * 1e3, "NLLS ADC", "viridis"),
     (np.fliplr(adc_ll) * 1e3, "Log-Linear ADC", "viridis"),
-    (np.rot90(ref.D, 1), "Reference D map", "viridis"),
+    (np.rot90(D, 1), "Reference D map", "viridis"),
 ]
 for ax, (im_data, title, cmap) in zip(axs, ims_data):
     im = ax.imshow(im_data, cmap=cmap)
@@ -403,10 +386,6 @@ plt.show()
 # %%
 try:
     np.save(rf"{VOLUMES_DIR_PATH}\ADC_multishot_se.npy", adc_nlls)
-    # np.save(rf"{VOLUMES_DIR_PATH}\ADC_multishot_se_loglinear.npy", adc_ll)
-    # np.save(rf"{VOLUMES_DIR_PATH}\FA_multishot_se.npy", fa_map)
-    # np.save(rf"{VOLUMES_DIR_PATH}\MD_multishot_se.npy", md_map)
-    # np.save(rf"{VOLUMES_DIR_PATH}\mag_images_multishot_se_adc.npy", mag_images)
     print("Saved ADC/DTI maps.")
 except Exception as e:
     print(f"Could not save: {e}")

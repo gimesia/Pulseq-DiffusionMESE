@@ -1,13 +1,24 @@
 # IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
 # December 2024–November 2028, Grant Agreement No. 101169519).
 
-# %%
+# %% ================================================================================
+#  Imports
+# ===================================================================================
+import logging
+import warnings
 import os
 import sys
 import numpy as np
-import warnings
+import MRzeroCore as mr0
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+import nibabel as nib
 
-warnings.filterwarnings("ignore", category=UserWarning, module="mrinufft")
+from pypulseq import Sequence
+
+import phantom_loader
+
 
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
@@ -16,32 +27,30 @@ seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
-# %% ================================================================================
-#  Imports
-# =================================================================================
-import MRzeroCore as mr0
-import torch
-import matplotlib.pyplot as plt
-import nibabel as nib
-
+# %%
 from EPIDiffusionTripleSEPulseqSeq import EPIDiffusionTripleSEPulseqSeq
 from utils import SystemLimitType
 from utils_simulation import *
 from mrinufft import get_operator
+
+logger = logging.getLogger()
+logger.setLevel(logging.FATAL)  # Suppress INFO and WARNING
+warnings.filterwarnings("ignore", category=UserWarning, module="mrinufft")
 
 np.int = int
 np.float = float
 np.complex = complex
 
 use_GPU = torch.cuda.is_available()
-BLIP_DOWN = False # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
+BLIP_DOWN = True  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
+PHANTOM_IDX = 0
 
 # =================================================================================
 #   Paths
 # =================================================================================
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
-VOLUMES_DIR_PATH = rf".\simulated\vol"
-PHANTOMS_DIR_PATH = rf".\phantoms\brainweb"
+VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
+PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
 ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
 
 # %% ==============================================================================
@@ -54,7 +63,7 @@ slice_thickness = res * 1e-3
 # Triple SE: sweep ~15 TE1 values instead of 45.
 # Each TR yields 3 echoes (TE1, TE2, TE3 auto-computed), giving ~45 (TE, image)
 # pairs with only ~15 TRs — a 3× scan-time reduction vs the single-echo approach.
-TEs_TE1 = np.arange(80, 155, 5)  # 15 TE1 values [ms]
+TEs_TE1 = np.arange(65, 155, 5, dtype=int)  # 15 TE1 values [ms]
 TR = 5000
 b_value = 0
 Nx = Ny = int(fov / slice_thickness)
@@ -63,39 +72,20 @@ Nx = Ny = int(fov / slice_thickness)
 # %% ==============================================================================
 #   Load phantom
 # =================================================================================
-PHANTOM_IDX = 4
-NZ = 10
-SLICE_IDX = 4
-
-add_tumor = True
-tumor_size = (10, 10, 10)
-
-phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if f.endswith(".npz")]
+phantoms = [f for f in os.listdir(PHANTOMS_DIR_PATH) if "brainweb" in f]
 print("Available phantoms:", phantoms)
-phantom_path = os.path.join(PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX])
+phantom_path = os.path.join(
+    PHANTOMS_DIR_PATH, phantoms[PHANTOM_IDX], f"{phantoms[PHANTOM_IDX]}-3T.json"
+)
+print(f"Loading phantom from {phantom_path} ...")
 
-if os.path.isfile(phantom_path) and phantom_path.endswith(".npz"):
-    phantom = mr0.VoxelGridPhantom.load(phantom_path)
-    print(f"Loaded phantom {os.path.split(phantom_path)[-1]}. Shape: {phantom.D.shape}")
-
-    if add_tumor:
-        phantom = add_tumor_to_phantom(
-            phantom,
-            tumor_size=tumor_size,
-            tumor_location="br",
-            adc_tumor_core=1.5,
-            adc_tumor_border=2.5,
-        )
-    phantom = phantom.interpolate(Nx, Ny, NZ)
-    print(f"Resized phantom. Shape: {phantom.D.shape}")
-
-    phantom = phantom.slices([SLICE_IDX])
-    print(f"Selected slice. Shape: {phantom.D.shape}")
-
-else:
-    raise FileNotFoundError(f"Error: Invalid phantom file at {phantom_path}")
-
-phantom_data = phantom.build()
+phantom, phantom_data = phantom_loader.load_phantom(
+    json_path=phantom_path,
+    resolution_mm=res,
+    slice_idx=None,
+)
+D = phantom.D
+T2 = phantom.T2
 
 # %% ================================================================================
 #   Main simulation loop: generate triple SE sequence, simulate, separate
@@ -103,9 +93,10 @@ phantom_data = phantom.build()
 # =================================================================================
 # Collect magnitude images and echo times from all TRs and all 3 echoes.
 all_echo_images = []  # each entry: (Ny, Nx) magnitude image
-all_echo_tes = []     # corresponding echo time in ms
+all_echo_tes = []  # corresponding echo time in ms
 
 for te1 in TEs_TE1:
+    print(f"Simulating for TE1={te1} ms ...")
     # =================================================================================
     #   Generate sequence
     # =================================================================================
@@ -129,12 +120,12 @@ for te1 in TEs_TE1:
         big_DELTA=0.03,
         system_type=SystemLimitType.EXTRASAFE,
         calibration_readout=True,
-        blip_down=BLIP_DOWN,
-        ramp_sampling="ramp_sampled",
         uniform_spoiler_directions=False,
-        uniform_spoiler_areas=False,
+        uniform_spoiler_areas=True,
         phase_cycling=False,
-        partial_fourier_factor=1,
+        blip_down=BLIP_DOWN,
+        logger=logger,
+        fit_epi=True,
     )
     seq.write()
 
@@ -191,11 +182,11 @@ for te1 in TEs_TE1:
     echo2_ksp = epi_signal[samples_epi1 : samples_epi1 + samples_epi2].reshape(
         seq.Ny, seq.adc.num_samples
     )
-    echo3_ksp = epi_signal[
-        samples_epi1 + samples_epi2 : samples_per_dir
-    ].reshape(seq.Ny, seq.adc.num_samples)
+    echo3_ksp = epi_signal[samples_epi1 + samples_epi2 : samples_per_dir].reshape(
+        seq.Ny, seq.adc.num_samples
+    )
 
-    print(f"  Echo1 ksp: {echo1_ksp.shape}, Echo2 ksp: {echo2_ksp.shape}, Echo3 ksp: {echo3_ksp.shape}")
+    # print(f"  Echo1 ksp: {echo1_ksp.shape}, Echo2 ksp: {echo2_ksp.shape}, Echo3 ksp: {echo3_ksp.shape}")
 
     # ==============================================================================
     #   Calculate k-space trajectory
@@ -203,10 +194,10 @@ for te1 in TEs_TE1:
     k_traj_adc, k_traj, _, _, t_adc = seq.seq.calculate_kspace()
     kx_norm = k_traj_adc[0] * fov / Nx
     ky_norm = k_traj_adc[1] * fov / Ny
-    print(
-        f"  [k-traj] kx range: [{kx_norm.min():.4f}, {kx_norm.max():.4f}] "
-        f"(expected Nyquist ≈ ±0.5, ramp overshoot OK)"
-    )
+    # print(
+    #     f"  [k-traj] kx range: [{kx_norm.min():.4f}, {kx_norm.max():.4f}] "
+    #     f"(expected Nyquist ≈ ±0.5, ramp overshoot OK)"
+    # )
     traj = np.stack([kx_norm, ky_norm], axis=-1)
 
     # Split trajectory to match the three echo k-spaces of direction 0
@@ -215,7 +206,10 @@ for te1 in TEs_TE1:
         samples_per_cal + samples_epi1 : samples_per_cal + samples_epi1 + samples_epi2
     ]
     traj_epi3 = traj[
-        samples_per_cal + samples_epi1 + samples_epi2 : samples_per_cal + samples_per_dir
+        samples_per_cal
+        + samples_epi1
+        + samples_epi2 : samples_per_cal
+        + samples_per_dir
     ]
 
     # =================================================================================
@@ -245,15 +239,21 @@ for te1 in TEs_TE1:
         all_echo_tes.append(te_ms)
 
         te_name = f"TE-{int(te_ms)}-{'blipdown' if BLIP_DOWN else 'blipup'}"
-        nii_path = os.path.join(ECHO_IMAGES_DIR_PATH, f"{name.replace(f'TE1-{te1}', '')}{te_name}.nii.gz")
-        affine = np.array([
-            [res, 0, 0, 0],
-            [0, res, 0, 0],
-            [0, 0, res, 0],
-            [0, 0, 0, 1]
-        ])
-        nib.save(nib.Nifti1Image(np.asarray(mag_img[:, :, np.newaxis], dtype=np.float32), affine=affine), nii_path)
-
+        nii_path = os.path.join(
+            ECHO_IMAGES_DIR_PATH, f"{name.replace(f'TE1-{te1}', '')}{te_name}.nii.gz"
+        )
+        affine = np.array(
+            [[res, 0, 0, 0], [0, res, 0, 0], [0, 0, res, 0], [0, 0, 0, 1]]
+        )
+        nib.save(
+            nib.Nifti1Image(
+                np.asarray(mag_img[:, :, np.newaxis], dtype=np.float32), affine=affine
+            ),
+            nii_path,
+        )
+    print(
+        "=================================================================================="
+    )
 print(f"\nCollected {len(all_echo_images)} echo images across {len(TEs_TE1)} TRs.")
 
 # %% ==============================================================================
@@ -308,35 +308,20 @@ for i, ax in enumerate(axs):
 plt.tight_layout()
 plt.show()
 
-# %% ==============================================================================
-#   Reference phantom
-# =================================================================================
-ref = mr0.VoxelGridPhantom.load(rf"{PHANTOMS_DIR_PATH}\{phantoms[PHANTOM_IDX]}")
-max_dim = max(ref.D.shape)
-ref.D = pad_to_cube(ref.D, max_dim)
-ref.T2 = pad_to_cube(ref.T2, max_dim)
-ref.T2dash = pad_to_cube(ref.T2dash, max_dim)
-ref.T1 = pad_to_cube(ref.T1, max_dim)
-ref.PD = pad_to_cube(ref.PD, max_dim)
-ref.B0 = pad_to_cube(ref.B0, max_dim)
-ref.B1 = pad_to_cube(ref.B1, max_dim)
-
-ref = ref.interpolate(Nx, Ny, NZ).slices([SLICE_IDX])
-ref.plot()
 
 # %% ==============================================================================
 #   Comparison: Triple SE T2 maps vs reference
 # =================================================================================
-N_TRs_SINGLE_SE = 45  # qMRI_t2relax.py uses np.arange(65, 290, 5) = 45 TEs
+n_trs  # qMRI_t2relax.py uses np.arange(65, 290, 5) = 45 TEs
 
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
 fig.suptitle(
     f"Triple SE T2 mapping — {n_trs} TRs ({n_trs * TR / 1000:.0f} s)  "
-    f"vs single SE: {N_TRs_SINGLE_SE} TRs ({N_TRs_SINGLE_SE * TR / 1000:.0f} s)  "
-    f"[{N_TRs_SINGLE_SE // n_trs}× fewer TRs]"
+    f"vs single SE: {n_trs} TRs ({n_trs * TR / 1000:.0f} s)  "
+    f"[{n_trs// n_trs}x fewer TRs]"
 )
 titles = ["NLLS Fit", "Log-Linear Fit", "Reference T2 map"]
-ims2 = [*ims, ref.T2]
+ims2 = [*ims, T2]
 # Save ims2[0] to file for later use
 
 for i, ax in enumerate(axs):
@@ -355,8 +340,9 @@ plt.show()
 
 # %%
 try:
-    np.save(f"simulated/vol/T2_MESE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0])
-    np.save("simulated/vol/T2_ref.npy", np.rot90(ims2[2], -1))
+    np.save(
+        f"simulated/vol/T2_MESE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0]
+    )
 except Exception:
     pass
 # %%
