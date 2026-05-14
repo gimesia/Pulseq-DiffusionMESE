@@ -42,7 +42,7 @@ np.float = float
 np.complex = complex
 
 use_GPU = torch.cuda.is_available()
-B_DIRS = 12
+B_DIRS = 6
 BLIP_DOWN = False
 PHANTOM_IDX = 0
 
@@ -52,7 +52,7 @@ PHANTOM_IDX = 0
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
 VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
 PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -290,7 +290,7 @@ for b_value in b_values:
     for d in range(n_dirs):
         for echo_idx, te_ms_echo in enumerate([te1_ms, te2_ms, te3_ms]):
             mag_img = np.abs(dir_echo_images[d][echo_idx])  # (Ny, Nx)
-            echo_name = f"b{int(b_value)}-dir{d}-TE{int(te_ms_echo)}-{'blipdown' if BLIP_DOWN else 'blipup'}"
+            echo_name = f"DiffTripleSE-b{int(b_value)}-dir{d}-TE{int(te_ms_echo)}-{'blipdown' if BLIP_DOWN else 'blipup'}"
             nii_path = os.path.join(ECHO_IMAGES_DIR_PATH, f"{echo_name}.nii.gz")
             nib.save(
                 nib.Nifti1Image(
@@ -320,20 +320,23 @@ mag_images_combined = mag_images.mean(axis=2)  # (n_b, n_dirs, Ny, Nx)
 #   Visualize reconstructed images — rows: echoes, columns: subset of b-values
 # =================================================================================
 SHOW_DIR = 0
-b_subset_indices = np.linspace(0, len(b_values) - 1, min(5, len(b_values)), dtype=int)
+b_subset_indices = np.linspace(0, len(b_values) - 1, len(b_values) // 2, dtype=int)
 
 fig, axs = plt.subplots(
-    3, len(b_subset_indices), figsize=(3 * len(b_subset_indices), 9)
+    B_DIRS, len(b_subset_indices), figsize=(len(b_subset_indices) * 3, B_DIRS * 3)
 )
-fig.suptitle(
-    "Triple SE DWI magnitude images\nRows: Echo 1 (TE1) | Echo 2 (TE2) | Echo 3 (TE3)"
-)
-for echo_idx, te_ms in enumerate([te1_ms, te2_ms, te3_ms]):
-    for col, b_idx in enumerate(b_subset_indices):
-        img = np.rot90(mag_images[b_idx, SHOW_DIR, echo_idx], -1)
-        axs[echo_idx, col].imshow(img, cmap="gray")
-        axs[echo_idx, col].set_title(f"b={b_values[b_idx]:.0f}\nTE={te_ms:.0f} ms")
-        axs[echo_idx, col].set_axis_off()
+for i in range(B_DIRS):
+    for j, b_idx in enumerate(b_subset_indices):
+        im = axs[i, j].imshow(
+            np.rot90(mag_images_combined[b_idx, i], -1),
+            cmap="gray",
+        )
+        if i == 0:
+            axs[i, j].set_title(f"b={b_values[b_idx]} s/mm²")
+
+        axs[i, j].set_axis_off()
+    axs[i, 0].set_ylabel(f"Direction {i+1}", rotation=0, labelpad=40, fontsize=12)
+fig.suptitle("Reconstructed magnitude images (all echoes combined)", fontsize=16)
 plt.tight_layout()
 plt.show()
 
@@ -447,6 +450,9 @@ plt.show()
 #   Save outputs
 # =================================================================================
 try:
+    np.save(
+        f"simulated/vol/ADC_MESE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", adc_nlls[0]
+    )
     np.save(f"{VOLUMES_DIR_PATH}/ADC_triple_se.npy", adc_nlls)
     print(f"Saved all maps to {VOLUMES_DIR_PATH}")
 except Exception as e:

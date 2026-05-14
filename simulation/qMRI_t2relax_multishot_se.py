@@ -50,7 +50,7 @@ PHANTOM_IDX = 0
 SEQUENCES_DIR_PATH = r".\simulated\seq"
 VOLUMES_DIR_PATH = r".\simulated\brainmaps"
 PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\t2_img"
 
 # %% ==============================================================================
 #   Simulation parameters

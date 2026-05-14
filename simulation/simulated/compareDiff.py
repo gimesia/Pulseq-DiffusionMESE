@@ -9,15 +9,15 @@ t2SSE_blipup = np.load("brainmaps/T2_SSE_blipup.npy")
 t2SSE_blipdown = np.load("brainmaps/T2_SSE_blipdown.npy")
 t2MESE_blipup = np.load("brainmaps/T2_MESE_blipup.npy")
 t2MESE_blipdown = np.load("brainmaps/T2_MESE_blipdown.npy")
-t2Ref = (np.load("brainmaps/T2_Ref.npy"))
-t2multishot_se = (np.load("brainmaps/T2_multishot_se.npy"))
+t2Ref = (np.load("brainmaps/ADC_ref.npy"))
+t2multishot_se = (np.load("brainmaps/ADC_multishot_se.npy"))
 # t2MESE_distcorr_blipdown = np.load("brainmaps/T2_MSE_distcorr_blipdown.npy")
 # t2SSE_distcorr_blipdown = np.load("brainmaps/T2_SSE_distcorr_blipdown.npy")
 # t2MESE_distcorr_blipup = np.load("brainmaps/T2_MSE_distcorr_blipup.npy")
 # t2SSE_distcorr_blipup = np.load("brainmaps/T2_SSE_distcorr_blipup.npy")
 
 ims = [t2SSE_blipup, t2SSE_blipdown, t2MESE_blipup, t2MESE_blipdown, t2multishot_se, t2Ref]
-titles = ["T2 SSE Blip-Up", "T2 SSE Blip-Down", "T2 MESE Blip-Up", "T2 MESE Blip-Down", "T2 Multishot SE", "T2 Reference"]
+titles = ["ADC SSE Blip-Up", "ADC SSE Blip-Down", "ADC MESE Blip-Up", "ADC MESE Blip-Down", "ADC Multishot SE", "ADC Reference"]
 
 n_images = len(ims)
 n_cols = 2

@@ -50,7 +50,7 @@ PHANTOM_IDX = 0
 SEQUENCES_DIR_PATH = r".\simulated\seq"
 VOLUMES_DIR_PATH = r".\simulated\brainmaps"
 PHANTOMS_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -66,13 +66,13 @@ slice_thickness = res * 1e-3
 # which biases the tensor fit and inflates spurious FA.
 TE_VALUES = [
     100,
-]  # 150, 200]         # [ms] — three echo times
+]
 TE_FOR_DTI = TE_VALUES[0]  # use shortest TE for DTI (best SNR)
 TR = 5000  # [ms]
 ETL = 1  # echo train length (1 = conventional SE per shot)
 
 b_values = np.arange(0, 2001, 100, dtype=int)  # [s/mm²]
-B_DIRS = 12  # 12 directions → full-rank, well-conditioned tensor fit
+B_DIRS = 6
 small_delta = 0.018  # [s]
 big_DELTA = 0.03  # [s]
 
@@ -386,6 +386,7 @@ plt.show()
 # %%
 try:
     np.save(rf"{VOLUMES_DIR_PATH}\ADC_multishot_se.npy", adc_nlls)
+    np.save(rf"{VOLUMES_DIR_PATH}\ADC_ref.npy", D)
     print("Saved ADC/DTI maps.")
 except Exception as e:
     print(f"Could not save: {e}")

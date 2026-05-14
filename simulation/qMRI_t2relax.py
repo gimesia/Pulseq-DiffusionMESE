@@ -43,7 +43,7 @@ np.complex = complex
 
 use_GPU = torch.cuda.is_available()
 
-BLIP_DOWN = False  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
+BLIP_DOWN = True  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
 PHANTOM_IDX = 0
 
 # =================================================================================
@@ -52,7 +52,7 @@ PHANTOM_IDX = 0
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
 VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
 PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\TE"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\t2_img"
 
 
 # %% ==============================================================================
@@ -173,7 +173,7 @@ for te in TEs:
         v141_compat=True,
         small_delta=0.018,
         big_DELTA=0.03,
-        system_type=SystemLimitType.EXTRASAFE,
+        system_type=SystemLimitType.EXTREME,
         calibration_readout=True,
         blip_down=BLIP_DOWN,
         logger=logger,
