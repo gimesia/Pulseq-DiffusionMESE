@@ -222,9 +222,7 @@ def create_adc_map(data, b_values, method="nlls", **kwargs):
 # ---------------------------------------------------------------------------
 # Diffusion tensor (DTI) → FA and MD
 # ---------------------------------------------------------------------------
-def create_dti_maps(
-    data_per_dir, b_values, b_vectors, threshold_frac=0.1, md_max=5e-3
-):
+def create_dti_maps(data_per_dir, b_values, b_vectors, threshold_frac=0.1, md_max=5e-3):
     """Voxel-wise log-linear diffusion tensor fit, returning FA and MD maps.
 
     Model
@@ -282,17 +280,15 @@ def create_dti_maps(
 
     g = np.asarray(b_vectors, dtype=float)
     if g.shape != (n_dir, 3):
-        raise ValueError(
-            f"`b_vectors` must be ({n_dir}, 3); got shape {g.shape}"
-        )
+        raise ValueError(f"`b_vectors` must be ({n_dir}, 3); got shape {g.shape}")
 
     # Design matrix X of shape (n_b * n_dir, 7). Each row encodes the
     # contribution of one (b_i, g_j) measurement to the unknowns
     # [ln S0, Dxx, Dyy, Dzz, Dxy, Dxz, Dyz]. The off-diagonal entries get a
     # factor of 2 because g^T D g expands to
     #     Dxx*gx^2 + Dyy*gy^2 + Dzz*gz^2 + 2*Dxy*gx*gy + 2*Dxz*gx*gz + 2*Dyz*gy*gz.
-    bb = np.repeat(b_arr, n_dir)                      # (N,)
-    gg = np.tile(g, (n_b, 1))                         # (N, 3)
+    bb = np.repeat(b_arr, n_dir)  # (N,)
+    gg = np.tile(g, (n_b, 1))  # (N, 3)
     gx, gy, gz = gg[:, 0], gg[:, 1], gg[:, 2]
     X = np.column_stack(
         [
@@ -307,10 +303,10 @@ def create_dti_maps(
     )  # (N, 7)
 
     eps = 1e-12
-    log_S = np.log(np.maximum(data, eps))             # (n_b, n_dir, ny, nx)
-    Y = log_S.reshape(n_b * n_dir, ny * nx)           # (N, n_voxels)
+    log_S = np.log(np.maximum(data, eps))  # (n_b, n_dir, ny, nx)
+    Y = log_S.reshape(n_b * n_dir, ny * nx)  # (N, n_voxels)
 
-    coeffs, *_ = np.linalg.lstsq(X, Y, rcond=None)    # (7, n_voxels)
+    coeffs, *_ = np.linalg.lstsq(X, Y, rcond=None)  # (7, n_voxels)
     ln_s0 = coeffs[0]
     Dxx, Dyy, Dzz = coeffs[1], coeffs[2], coeffs[3]
     Dxy, Dxz, Dyz = coeffs[4], coeffs[5], coeffs[6]
@@ -326,9 +322,9 @@ def create_dti_maps(
     D[:, 0, 1] = D[:, 1, 0] = Dxy
     D[:, 0, 2] = D[:, 2, 0] = Dxz
     D[:, 1, 2] = D[:, 2, 1] = Dyz
-    eigvals = np.linalg.eigvalsh(D)[:, ::-1]          # (n_vox, 3), descending
+    eigvals = np.linalg.eigvalsh(D)[:, ::-1]  # (n_vox, 3), descending
 
-    md = eigvals.mean(axis=1)                         # (n_vox,)
+    md = eigvals.mean(axis=1)  # (n_vox,)
     diff = eigvals - md[:, None]
     num = (diff * diff).sum(axis=1)
     den = (eigvals * eigvals).sum(axis=1)
@@ -343,7 +339,7 @@ def create_dti_maps(
     # Background mask: use the lowest-b image (averaged across directions)
     # as the SNR proxy, since b=0 is not guaranteed to be present.
     b0_idx = int(np.argmin(b_arr))
-    snr_proxy = data[b0_idx].mean(axis=0)             # (ny, nx)
+    snr_proxy = data[b0_idx].mean(axis=0)  # (ny, nx)
     mask = snr_proxy > (snr_proxy.max() * threshold_frac)
 
     md_map = np.where(mask & (md_map > 0) & (md_map < md_max), md_map, 0.0)

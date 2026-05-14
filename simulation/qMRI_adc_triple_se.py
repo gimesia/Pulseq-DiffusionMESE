@@ -68,7 +68,7 @@ slice_thickness = res * 1e-3
 TE1 = 100  # [ms]
 
 # Vary b-values instead of TEs. Matches qMRI_adc.py exactly.
-b_values = np.arange(0, 2001, 100, dtype=int)  # [s/mm^2]  — matches qMRI_adc.py
+b_values = np.arange(0, 2001, 500, dtype=int)  # [s/mm^2]  — matches qMRI_adc.py
 
 TR = 5000
 Nx = Ny = int(fov / slice_thickness)
@@ -343,14 +343,15 @@ plt.show()
 # %% ==============================================================================
 #   Trace-DWI (geometric mean across directions) — combined across echoes
 # =================================================================================
-# Collapse the direction axis via geometric mean to obtain a rotation-invariant
-# signal: (n_b, Ny, Nx).
-eps = 1e-12
-
-
 def compute_trace_dwi(mag):
-    """Geometric mean across diffusion directions. mag: (n_b, n_dirs, Ny, Nx)."""
-    return np.exp(np.mean(np.log(mag + eps), axis=1))
+    """Geometric mean across diffusion directions. mag: (n_b, n_dirs, Ny, Nx).
+
+    Floor is data-scaled (not 1e-12) so that a single noise-floor voxel in
+    one direction at high b doesn't drag the geometric mean to ~0 and create
+    a fake fast-decay (= falsely high ADC).
+    """
+    eps_local = 1e-3 * float(mag[0].max())  # ~1e-3 of the b=0 peak
+    return np.exp(np.mean(np.log(np.maximum(mag, eps_local)), axis=1))
 
 
 trace_dwi = compute_trace_dwi(mag_echo1)  # (n_b, Ny, Nx)

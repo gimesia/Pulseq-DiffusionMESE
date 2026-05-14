@@ -71,7 +71,7 @@ TE_FOR_DTI = TE_VALUES[0]  # use shortest TE for DTI (best SNR)
 TR = 5000  # [ms]
 ETL = 1  # echo train length (1 = conventional SE per shot)
 
-b_values = np.arange(0, 2001, 100, dtype=int)  # [s/mm²]
+b_values = np.arange(0, 2001, 500, dtype=int)  # [s/mm²]
 B_DIRS = 6
 small_delta = 0.018  # [s]
 big_DELTA = 0.03  # [s]
@@ -137,7 +137,7 @@ for te in TE_VALUES:
             big_DELTA=big_DELTA,
             save_dir=SEQUENCES_DIR_PATH,
             v141_compat=True,
-            system_type=SystemLimitType.EXTRASAFE,
+            system_type=SystemLimitType.EXTREME,
             logger=logger,
         )
         seq.build_seq()
@@ -268,12 +268,15 @@ plt.show()
 # %% ==============================================================================
 #   Trace DWI — geometric mean across directions (TE-averaged stack)
 # ==============================================================================
-eps = 1e-12
-
-
 def compute_trace_dwi(mag):
-    """Geometric mean across diffusion directions. mag: (n_b, n_dirs, Ny, Nx)."""
-    return np.exp(np.mean(np.log(mag + eps), axis=1))
+    """Geometric mean across diffusion directions. mag: (n_b, n_dirs, Ny, Nx).
+
+    Floor is data-scaled (not 1e-12) so that a single noise-floor voxel in
+    one direction at high b doesn't drag the geometric mean to ~0 and create
+    a fake fast-decay (= falsely high ADC).
+    """
+    eps_local = 1e-3 * float(mag[0].max())  # ~1e-3 of the b=0 peak
+    return np.exp(np.mean(np.log(np.maximum(mag, eps_local)), axis=1))
 
 
 trace_dwi = compute_trace_dwi(mag_images_adc)  # (n_b, Ny, Nx)
