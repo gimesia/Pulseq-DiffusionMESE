@@ -23,7 +23,7 @@ import phantom_loader
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
 # such as using environment variables or a configuration file.
-seq_path = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
+seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
@@ -50,8 +50,8 @@ PHANTOM_IDX = 0
 # ================================================================================
 SEQUENCES_DIR_PATH = r".\simulated\seq"
 VOLUMES_DIR_PATH = r".\simulated\brainmaps"
-PHANTOMS_DIR_PATH = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
+PHANTOMS_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -96,7 +96,7 @@ phantom_path = os.path.join(
 )
 print(f"Loading phantom from {phantom_path} ...")
 
-phantom, phantom_data = phantom_loader.load_phantom(
+phantom, phantom_data, tissue_masks = phantom_loader.load_phantom(
     json_path=phantom_path,
     resolution_mm=res,
     slice_idx=None,
@@ -303,10 +303,13 @@ print(
 
 # %% ==============================================================================
 #   ADC comparison plot (NLLS vs log-linear)
-# ==============================================================================
+# =================================================================================
+
+
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
 titles = ["NLLS Fit", "Log-Linear Fit"]
 for i, adc in enumerate([adc_nlls, adc_ll]):
+    
     im = axs[i].imshow(adc * 1e3, cmap="viridis")
     axs[i].set_title(titles[i])
     axs[i].set_axis_off()

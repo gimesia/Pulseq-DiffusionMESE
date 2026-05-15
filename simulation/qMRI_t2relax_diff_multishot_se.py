@@ -49,9 +49,9 @@ PHANTOM_IDX = 0
 # ================================================================================
 SEQUENCES_DIR_PATH = r".\simulated\seq"
 VOLUMES_DIR_PATH = r".\simulated\brainmaps"
+MASKS_DIR_PATH = r".\simulated\masks"
 PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
 ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\t2_img"
-
 # %% ==============================================================================
 #   Simulation parameters
 # ==============================================================================
@@ -138,7 +138,7 @@ phantom_path = os.path.join(
 )
 print(f"Loading phantom from {phantom_path} ...")
 
-phantom, phantom_data = phantom_loader.load_phantom(
+phantom, phantom_data, tissue_masks = phantom_loader.load_phantom(
     json_path=phantom_path,
     resolution_mm=res,
     slice_idx=None,
@@ -295,6 +295,12 @@ plt.show()
 try:
     np.save(rf"{VOLUMES_DIR_PATH}\T2_multishot_se.npy", ims2[0])
     np.save(rf"{VOLUMES_DIR_PATH}\T2_ref.npy", np.rot90(ims2[2], 0))
+    
+    masks = []
+    for key, mask in tissue_masks.items():
+        masks.append(mask)
+    masks = torch.stack(masks, dim=0).numpy()  # (n_tissues, Ny, Nx)
+    np.save(rf"{VOLUMES_DIR_PATH}\tissue_masks-{phantoms[PHANTOM_IDX]}.npy", masks)
     print("Saved T2 maps.")
 except Exception as e:
     print(f"Could not save: {e}")

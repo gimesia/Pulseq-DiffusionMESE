@@ -83,7 +83,7 @@ phantom_path = os.path.join(
 )
 print(f"Loading phantom from {phantom_path} ...")
 
-phantom, phantom_data = phantom_loader.load_phantom(
+phantom, phantom_data, tissue_masks = phantom_loader.load_phantom(
     json_path=phantom_path,
     resolution_mm=res,
     slice_idx=None,

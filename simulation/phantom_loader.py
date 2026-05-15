@@ -16,11 +16,12 @@ Usage
         slice_idx      = None,    # None → middle slice
     )
 """
-
+#%%
 from __future__ import annotations
 
 import os
 from copy import deepcopy
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn.functional as F
@@ -184,41 +185,13 @@ def _match_fov(
 #  Public API
 # ──────────────────────────────────────────────────────────────────────────────
 
-
 def load_phantom(
     json_path: str,
     fov_mm: float = 224.0,
     resolution_mm: float = 224.0 / 96,
     slice_idx: int | None = None,
-) -> tuple[mr0.VoxelGridPhantom, object]:
-    """Load a NIfTI BrainWeb phantom matched to a sequence FOV and resolution.
+) -> tuple[mr0.VoxelGridPhantom, object, dict[str, torch.Tensor]]:
 
-    The pipeline is:
-        load → combine → sanitize → pad to square → match FOV → interpolate → slice
-
-    Parameters
-    ----------
-    json_path : str
-        Path to the ``phantom.json`` produced by ``mr0.generate_brainweb_phantoms()``.
-    fov_mm : float
-        In-plane field of view in mm, matching the sequence FOV (e.g. 224.0).
-        The phantom is centre-cropped or zero-padded to this FOV before
-        resampling so that phantom.size matches the sequence exactly.
-    resolution_mm : float
-        Isotropic voxel size in mm (e.g. 224/96 ≈ 2.333 for a 96-matrix).
-        Together with fov_mm this determines the in-plane matrix:
-        NX = NY = round(fov_mm / resolution_mm).
-        NZ is chosen to give isotropic voxels over the full z extent.
-    slice_idx : int | None
-        Slice to select after interpolation (0-indexed).  None → middle slice.
-
-    Returns
-    -------
-    phantom : mr0.VoxelGridPhantom
-        Single-slice phantom whose .size matches the sequence FOV exactly.
-    phantom_data : SimData
-        Result of phantom.build().
-    """
     if not os.path.isfile(json_path):
         raise FileNotFoundError(f"Phantom JSON not found: {json_path}")
 
@@ -226,21 +199,28 @@ def load_phantom(
     tissue_dict = mr0.TissueDict.load(json_path)
     tissue_dict.pop("fat", None)
     tissue_dict.pop("vessels", None)
-    print(f"[load]        tissues : {list(tissue_dict.keys())}")
+    tissue_names = list(tissue_dict.keys())
+    print(f"[load]        tissues : {tissue_names}")
     print(f"[load]        native  : {next(iter(tissue_dict.values())).PD.shape}")
 
     phantom = tissue_dict.combine()
 
-    # 2. Sanitize NaN/Inf from combine()'s 0/0 weighted average
+    # Piggyback per-tissue PDs into tissue_masks so they ride through
+    # all spatial transforms (_pad_to_square_hw, _match_fov, interpolate,
+    # slices) on the exact same grid as phantom.PD.
+    for name, tissue in tissue_dict.items():
+        phantom.tissue_masks[name] = tissue.PD.clone()
+
+    # 2. Sanitize
     phantom = _sanitize(phantom)
 
-    # 3. Pad in-plane to square (keeps voxel pitch equal in x and y)
+    # 3. Pad to square
     phantom = _pad_to_square_hw(phantom)
 
-    # 4. Crop or pad to match sequence FOV exactly
+    # 4. Match FOV
     phantom = _match_fov(phantom, fov_mm)
 
-    # 5. Compute matrix size from FOV and resolution
+    # 5. Compute grid
     nx = ny = round(fov_mm / resolution_mm)
     vox_z = (
         phantom.size[2].item()
@@ -253,7 +233,7 @@ def load_phantom(
         f"(voxel {resolution_mm:.4f} × {resolution_mm:.4f} × {vox_z:.3f} mm)"
     )
 
-    # 6. Interpolate to simulation grid
+    # 6. Interpolate
     phantom = phantom.interpolate(nx, ny, nz)
     vox_mm = (phantom.size / torch.tensor(phantom.D.shape) * 1e3).tolist()
     print(
@@ -261,26 +241,36 @@ def load_phantom(
         f"voxel: {[round(v, 4) for v in vox_mm]} mm"
     )
 
-    # 7. Select slice
+    # 7. Slice
     if slice_idx is None:
         slice_idx = nz // 2
     phantom = phantom.slices([slice_idx])
     print(f"[slice]       {slice_idx}/{nz}")
 
+    # 8. Extract per-tissue masks from tissue_masks — perfectly aligned
+    #    since they went through the same transforms as phantom.PD.
+    #    Use argmax for mutually exclusive tissue assignment.
+    stacked = torch.stack(
+        [phantom.tissue_masks[n].squeeze(-1).float() for n in tissue_names], dim=0
+    )  # (N_tissues, NX, NY)
+    assignments = stacked.argmax(dim=0)  # (NX, NY)
+    tissue_masks: dict[str, torch.Tensor] = {}
+    for i, name in enumerate(tissue_names):
+        tissue_masks[name] = (assignments == i) & (stacked[i] > 0.05)
+
+    print(f"[masks]       {tissue_names} — shape {stacked.shape[1:]}")
+    print(f"[masks]       counts: { {n: tissue_masks[n].sum().item() for n in tissue_names} }")
+
+    # 9. Build
     phantom_data = phantom.build()
     print(
         f"[build]       {phantom_data.PD.shape[0]} voxels, "
         f"PD sum = {phantom_data.PD.sum().item():.1f}"
     )
 
-    # Sanitize B1/coil_sens in SimData after build().
-    # NaN can survive interpolation boundaries into brain-tissue voxels even
-    # after pre-build sanitization. NaN real → 1.0 (nominal flip, no B1 info),
-    # NaN imag → 0.0 (no phase offset). Then recompute avg_B1_trig.
+    # 10. Sanitize B1
     def _fix_complex(t: torch.Tensor, default_real: float = 1.0) -> torch.Tensor:
-        real = torch.nan_to_num(
-            t.real, nan=default_real, posinf=default_real, neginf=0.0
-        )
+        real = torch.nan_to_num(t.real, nan=default_real, posinf=default_real, neginf=0.0)
         imag = torch.nan_to_num(t.imag, nan=0.0, posinf=0.0, neginf=0.0)
         return torch.complex(real, imag)
 
@@ -289,7 +279,6 @@ def load_phantom(
         phantom_data.B1 = _fix_complex(phantom_data.B1, default_real=1.0)
         phantom_data.coil_sens = _fix_complex(phantom_data.coil_sens, default_real=1.0)
         from MRzeroCore.phantom.sim_data import calc_avg_B1_trig
-
         phantom_data.avg_B1_trig = calc_avg_B1_trig(phantom_data.B1, phantom_data.PD)
         print(
             f"[sanitize B1] fixed {b1_nans} NaN values in SimData.B1, "
@@ -297,4 +286,25 @@ def load_phantom(
             f"{phantom_data.avg_B1_trig.isnan().sum().item()}"
         )
 
-    return phantom, phantom_data
+    return phantom, phantom_data, tissue_masks
+
+# %%
+phantom, phantom_data, tissue_masks = load_phantom(
+    json_path=r'C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms\brainweb-subj04\brainweb-subj04-3T.json',
+    resolution_mm=2.333333333333333,
+    fov_mm=224.0,
+    slice_idx=None,
+)
+
+fig, axes = plt.subplots(1, 4, figsize=(12, 4))
+axes[0].imshow(tissue_masks['wm'])
+axes[0].set_title('WM')
+axes[1].imshow(tissue_masks['gm'])
+axes[1].set_title('GM')
+axes[2].imshow(tissue_masks['csf'])
+axes[2].set_title('CSF')
+axes[3].imshow(phantom.PD.squeeze())
+axes[3].set_title('PD')
+plt.tight_layout()
+plt.show()
+# %%
