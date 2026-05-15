@@ -293,8 +293,8 @@ plt.show()
 
 # %%
 try:
-    np.save(rf"{VOLUMES_DIR_PATH}\T2_multishot_se.npy", ims2[0])
-    np.save(rf"{VOLUMES_DIR_PATH}\T2_ref.npy", ims2[2])
+    np.save(rf"{VOLUMES_DIR_PATH}\{phantoms[PHANTOM_IDX]}-T2_multishot_se.npy", ims2[0])
+    np.save(rf"{VOLUMES_DIR_PATH}\{phantoms[PHANTOM_IDX]}-T2_ref.npy", ims2[2])
     print("Saved T2 maps.")
 except Exception as e:
     print(f"Could not save: {e}")

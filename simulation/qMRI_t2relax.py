@@ -379,7 +379,7 @@ for i, ax in enumerate(axs):
 # %%
 try:
     np.save(
-        f"simulated/brainmaps/T2_SSE{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0]
+        f"simulated/brainmaps/{phantoms[PHANTOM_IDX]}-T2_SSE{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0]
     )
 except Exception:
     pass

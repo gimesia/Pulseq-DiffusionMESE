@@ -293,14 +293,14 @@ plt.show()
 
 # %%
 try:
-    np.save(rf"{VOLUMES_DIR_PATH}\T2_multishot_se.npy", ims2[0])
-    np.save(rf"{VOLUMES_DIR_PATH}\T2_ref.npy", np.rot90(ims2[2], 0))
+    np.save(rf"{VOLUMES_DIR_PATH}\{phantoms[PHANTOM_IDX]}-T2_multishot_se.npy", ims2[0])
+    np.save(rf"{VOLUMES_DIR_PATH}\{phantoms[PHANTOM_IDX]}-T2_ref.npy", np.rot90(ims2[2], 0))
     
     masks = []
     for key, mask in tissue_masks.items():
         masks.append(mask)
     masks = torch.stack(masks, dim=0).numpy()  # (n_tissues, Ny, Nx)
-    np.save(rf"{VOLUMES_DIR_PATH}\tissue_masks-{phantoms[PHANTOM_IDX]}.npy", masks)
+    np.save(rf"{VOLUMES_DIR_PATH}\{phantoms[PHANTOM_IDX]}-tissue_masks.npy", masks)
     print("Saved T2 maps.")
 except Exception as e:
     print(f"Could not save: {e}")

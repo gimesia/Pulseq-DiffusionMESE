@@ -392,8 +392,14 @@ plt.show()
 
 # %%
 try:
-    np.save(rf"{VOLUMES_DIR_PATH}\ADC_multishot_se.npy", adc_nlls*1e3)  # save in x10⁻³ mm²/s units for easier comparison
-    np.save(rf"{VOLUMES_DIR_PATH}\ADC_ref.npy", np.rot90(D, 1))
+    np.save(rf"{VOLUMES_DIR_PATH}\{phantoms[PHANTOM_IDX]}-ADC_multishot_se.npy", ims_data[0][0])  # save in x10⁻³ mm²/s units for easier comparison
+    np.save(rf"{VOLUMES_DIR_PATH}\{phantoms[PHANTOM_IDX]}-ADC_ref.npy", ims_data[2][0])
+    
+    masks = []
+    for key, mask in tissue_masks.items():
+        masks.append(mask)
+    masks = torch.stack(masks, dim=0).numpy()  # (n_tissues, Ny, Nx)
+    np.save(rf"{VOLUMES_DIR_PATH}\{phantoms[PHANTOM_IDX]}-tissue_masks.npy", masks)
     print("Saved ADC/DTI maps.")
 except Exception as e:
     print(f"Could not save: {e}")

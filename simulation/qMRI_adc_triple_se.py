@@ -456,7 +456,7 @@ plt.show()
 # =================================================================================
 try:
     np.save(
-        f"{VOLUMES_DIR_PATH}/ADC_MSE{'blipdown' if BLIP_DOWN else 'blipup'}.npy", adc_nlls
+        f"{VOLUMES_DIR_PATH}/{phantoms[PHANTOM_IDX]}-ADC_MSE{'blipdown' if BLIP_DOWN else 'blipup'}.npy", adc_nlls
     )
     print(f"Saved all maps to {VOLUMES_DIR_PATH}")
 except Exception as e:
