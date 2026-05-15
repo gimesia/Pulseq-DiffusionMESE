@@ -50,6 +50,7 @@ PHANTOM_IDX = 0
 # ================================================================================
 SEQUENCES_DIR_PATH = r".\simulated\seq"
 VOLUMES_DIR_PATH = r".\simulated\brainmaps"
+MASKS_DIR_PATH = r".\simulated\masks"
 PHANTOMS_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
 ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
 
@@ -74,8 +75,8 @@ ETL = 1  # echo train length (1 = conventional SE per shot)
 
 b_values = np.arange(0, 2001, 100, dtype=int)  # [s/mm²]
 B_DIRS = 6
-small_delta = 0.018  # [s]
-big_DELTA = 0.03  # [s]
+small_delta = None# 0.018  # [s]
+big_DELTA = None# 0.03  # [s]
 
 Nx = Ny = int(fov / slice_thickness)
 N_shots = Ny // ETL
@@ -188,10 +189,21 @@ for te in TE_VALUES:
         #   Reconstruct per direction (Cartesian iFFT)
         # ============================================================================
         dir_images = []
+        affine = np.array([[res, 0, 0, 0], [0, res, 0, 0], [0, 0, res, 0], [0, 0, 0, 1]])
         for d in range(n_dirs):
             kspace = signal[d * Ny * Nx : (d + 1) * Ny * Nx].numpy().reshape(Ny, Nx)
             img_mag, _ = fft_reconstruct_image(kspace, use_gpu=use_GPU)
             dir_images.append(img_mag.squeeze())
+            
+            echo_name = f"DiffMultiShotSE-b{int(b_value)}-dir{d}-TE{int(te)}"
+            nii_path = os.path.join(ECHO_IMAGES_DIR_PATH, f"{echo_name}.nii.gz")
+            nib.save(
+                nib.Nifti1Image(
+                    np.asarray(img_mag[:, :, np.newaxis], dtype=np.float32),
+                    affine=affine,
+                ),
+                nii_path,
+            )
         images_per_te[te].append(np.stack(dir_images, axis=0))  # (n_dirs, Ny, Nx)
 
     print(f"  Completed TE={te} ms: {len(images_per_te[te])} b-values × {n_dirs} dirs")
@@ -399,7 +411,7 @@ try:
     for key, mask in tissue_masks.items():
         masks.append(mask)
     masks = torch.stack(masks, dim=0).numpy()  # (n_tissues, Ny, Nx)
-    np.save(rf"{VOLUMES_DIR_PATH}\{phantoms[PHANTOM_IDX]}-tissue_masks.npy", masks)
+    np.save(rf"{MASKS_DIR_PATH}\{phantoms[PHANTOM_IDX]}-tissue_masks.npy", masks)
     print("Saved ADC/DTI maps.")
 except Exception as e:
     print(f"Could not save: {e}")

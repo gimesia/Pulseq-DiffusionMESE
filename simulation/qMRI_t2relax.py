@@ -23,7 +23,7 @@ import phantom_loader
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
 # such as using environment variables or a configuration file.
-seq_path = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
+seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
@@ -42,8 +42,7 @@ np.float = float
 np.complex = complex
 
 use_GPU = torch.cuda.is_available()
-
-BLIP_DOWN = True  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
+BLIP_DOWN = False  # Whether to use blip-down or blip-up EPI readout (affects distortion direction)
 PHANTOM_IDX = 0
 
 # =================================================================================
@@ -51,8 +50,8 @@ PHANTOM_IDX = 0
 # =================================================================================
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
 VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
-PHANTOMS_DIR_PATH = rf"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\t2_img"
+PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\t2_img"
 
 
 # %% ==============================================================================
@@ -62,64 +61,9 @@ fov = 224e-3
 res = 2.33333333
 slice_thickness = res * 1e-3
 # TEs = np.arange(65, 290, 5)  # From 70 to 410 with a step of 5
-TEs = np.array(
-    [
-        65,
-        70,
-        75,
-        80,
-        85,
-        90,
-        95,
-        100,
-        105,
-        110,
-        115,
-        120,
-        125,
-        127,
-        130,
-        132,
-        135,
-        137,
-        140,
-        142,
-        145,
-        147,
-        150,
-        152,
-        157,
-        162,
-        167,
-        172,
-        177,
-        182,
-        187,
-        189,
-        192,
-        194,
-        197,
-        199,
-        202,
-        204,
-        207,
-        209,
-        212,
-        214,
-        219,
-        224,
-        229,
-        234,
-        239,
-        244,
-        249,
-        254,
-        259,
-        264,
-        269,
-        274,
-    ], dtype=int
-)
+TEs = np.array([ 65,  70,  75,  80,  85,  90,  95, 100, 105, 110, 115,120, 123, 125, 128, 130, 133, 135, 138, 140, 
+                143, 145,148, 150, 153, 158, 163, 168, 173, 178, 181, 183, 186, 188, 191, 193, 196, 198, 201, 203, 
+                206, 208, 211, 216, 221, 226, 231, 236, 241, 246, 251, 256, 261, 266], dtype=int) # Match triple SE TEs
 TR = 5000
 b_value = 0
 Nx = Ny = int(fov / slice_thickness)
@@ -379,8 +323,9 @@ for i, ax in enumerate(axs):
 # %%
 try:
     np.save(
-        f"simulated/brainmaps/{phantoms[PHANTOM_IDX]}-T2_SSE{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0]
+        f"simulated/brainmaps/{phantoms[PHANTOM_IDX]}-T2_SSE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", ims2[0]
     )
-except Exception:
-    pass
+    print("T2 map saved successfully.")
+except Exception as e:
+    print(f"Error occurred while saving T2 map: {e}")
 # %%

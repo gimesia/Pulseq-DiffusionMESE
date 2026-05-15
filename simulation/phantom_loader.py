@@ -289,22 +289,23 @@ def load_phantom(
     return phantom, phantom_data, tissue_masks
 
 # %%
-phantom, phantom_data, tissue_masks = load_phantom(
-    json_path=r'C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms\brainweb-subj04\brainweb-subj04-3T.json',
-    resolution_mm=2.333333333333333,
-    fov_mm=224.0,
-    slice_idx=None,
-)
+if __name__ == "__main__":
+    phantom, phantom_data, tissue_masks = load_phantom(
+        json_path=r'C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms\brainweb-subj04\brainweb-subj04-3T.json',
+        resolution_mm=2.333333333333333,
+        fov_mm=224.0,
+        slice_idx=None,
+    )
 
-fig, axes = plt.subplots(1, 4, figsize=(12, 4))
-axes[0].imshow(tissue_masks['wm'])
-axes[0].set_title('WM')
-axes[1].imshow(tissue_masks['gm'])
-axes[1].set_title('GM')
-axes[2].imshow(tissue_masks['csf'])
-axes[2].set_title('CSF')
-axes[3].imshow(phantom.PD.squeeze())
-axes[3].set_title('PD')
-plt.tight_layout()
-plt.show()
+    fig, axes = plt.subplots(1, 4, figsize=(12, 4))
+    axes[0].imshow(tissue_masks['wm'])
+    axes[0].set_title('WM')
+    axes[1].imshow(tissue_masks['gm'])
+    axes[1].set_title('GM')
+    axes[2].imshow(tissue_masks['csf'])
+    axes[2].set_title('CSF')
+    axes[3].imshow(phantom.PD.squeeze())
+    axes[3].set_title('PD')
+    plt.tight_layout()
+    plt.show()
 # %%

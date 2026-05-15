@@ -23,7 +23,7 @@ import phantom_loader
 # The path to the pulseq-diffusion-mese directory.
 # TODO: It is advisable to replace this with a more robust method for path management,
 # such as using environment variables or a configuration file.
-seq_path = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
+seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
@@ -43,7 +43,7 @@ np.complex = complex
 
 use_GPU = torch.cuda.is_available()
 B_DIRS = 6
-BLIP_DOWN = False
+BLIP_DOWN = True
 PHANTOM_IDX = 0
 
 # =================================================================================
@@ -51,8 +51,8 @@ PHANTOM_IDX = 0
 # =================================================================================
 SEQUENCES_DIR_PATH = rf".\simulated\seq"
 VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
-PHANTOMS_DIR_PATH = rf"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
+PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
 
 # %% ==============================================================================
 #   Simulation parameters
@@ -72,6 +72,9 @@ b_values = np.arange(0, 2001, 100, dtype=int)  # [s/mm^2]  — matches qMRI_adc.
 
 TR = 5000
 Nx = Ny = int(fov / slice_thickness)
+
+small_delta = None  # 0.018  # [s]
+big_DELTA = None  # 0.03  # [s]
 
 # %% ==============================================================================
 #   Load phantom
@@ -122,9 +125,9 @@ for b_value in b_values:
         save_dir=SEQUENCES_DIR_PATH,
         save_name=name,
         v141_compat=True,
-        small_delta=0.018,
-        big_DELTA=0.03,
-        system_type=SystemLimitType.EXTRASAFE,
+        small_delta=small_delta,
+        big_DELTA=big_DELTA,
+        system_type=SystemLimitType.EXTREME,
         calibration_readout=True,
         blip_down=BLIP_DOWN,
         uniform_spoiler_directions=False,
@@ -456,7 +459,7 @@ plt.show()
 # =================================================================================
 try:
     np.save(
-        f"{VOLUMES_DIR_PATH}/{phantoms[PHANTOM_IDX]}-ADC_MSE{'blipdown' if BLIP_DOWN else 'blipup'}.npy", adc_nlls
+        f"{VOLUMES_DIR_PATH}/{phantoms[PHANTOM_IDX]}-ADC_MSE_{'blipdown' if BLIP_DOWN else 'blipup'}.npy", adc_nlls
     )
     print(f"Saved all maps to {VOLUMES_DIR_PATH}")
 except Exception as e:
