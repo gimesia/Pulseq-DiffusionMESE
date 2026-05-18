@@ -4,8 +4,11 @@ import re
 import numpy as np
 import nibabel as nib
 import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+# Do not force a non-interactive backend so plots can appear in Jupyter.
+# matplotlib will select an appropriate backend (e.g. inline) when run in
+# a Jupyter environment.
 from scipy import stats
 from collections import defaultdict
 import matplotlib.cm as cm
@@ -21,8 +24,8 @@ N_DIRS           = 6                            # dir0..dir5
 TE               = 100
 MASK_THRESH_FRAC = 0.2
 
-SEQUENCES = ["DiffSE", "DiffTripleSE", "DiffMultiShotSE"]
-SEQ_TITLES = ["Single SE", "Triple SE", "MultiShot SE"]
+SEQUENCES = ["DiffMultiShotSE", "DiffSE", "DiffTripleSE"]
+SEQ_TITLES = ["MultiShot SE", "Single SE", "Triple SE"]
 
 CMAP = cm.get_cmap('plasma')
 COLORS = [CMAP(i / (N_DIRS - 1)) for i in range(N_DIRS)][::-1]  # Reverse for better visibility
@@ -129,7 +132,7 @@ def plot_adc(ax, averaged, mask, bvals, n_dirs, colors, dir_labels, seq_name):
     ax.set_facecolor('white')
 
 # ---- Main ----
-fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=False)
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 fig.patch.set_facecolor('white')
 fig.suptitle("ADC Estimation", fontsize=14, fontweight='bold', color='black')
 
@@ -149,6 +152,8 @@ for ax, seq, title in zip(axes, SEQUENCES, SEQ_TITLES):
               framealpha=1.0, edgecolor='black', loc='upper right')
 
 plt.tight_layout()
+plt.show()
+
 plt.savefig(OUTPUT_PATH, dpi=250, facecolor='white')
 print(f"\nSaved: {OUTPUT_PATH}")
 # %%
