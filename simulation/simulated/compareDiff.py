@@ -186,7 +186,7 @@ for j in range(1, size):
     mae_value = mae(ref, target, non_zero=True)
     ax[1, j].imshow(im, cmap='plasma')
     ax[1, j].set_title(f"{ref_name} vs {target_name}\nMAE={mae_value:.4f} ×10⁻³ mm²/s")
-
+fig.savefig("adc_comparison_matrix.png", dpi=300, bbox_inches="tight")
 plt.show()
 # %% ==============================================================================
 #   Per-tissue MAE (WM / GM / CSF)
@@ -315,6 +315,56 @@ ax_bar.set_xticklabels(tissue_names_masks)
 ax_bar.set_ylabel("MAE (×10⁻³ mm²/s)")
 ax_bar.set_title("ADC MAE per tissue\n(SSE / MSE averaged over blip-up and blip-down)")
 ax_bar.legend()
+plt.tight_layout()
+plt.show()
+
+# %% ==============================================================================
+#   Mean ADC per tissue — Reference vs acquisition methods
+# =================================================================================
+def mean_tissue(img, mask):
+    img = np.squeeze(img)
+    valid = mask & (img > 0)
+    if valid.sum() == 0:
+        return float("nan")
+    return np.mean(img[valid])
+
+
+all_acqs = {
+    "Reference":    (adcRef_reg,          None),
+    "Multishot SE": (adcmultishot_se_reg,  None),
+    "SSE EPI":      (adcSSE_blipup_reg,   adcSSE_blipdown_reg),
+    "MSE EPI":      (adcMESE_blipup_reg,  adcMESE_blipdown_reg),
+}
+
+mean_per_acq = {}
+for acq, (img_a, img_b) in all_acqs.items():
+    vals = []
+    for t in range(n_tissues):
+        mask = tissue_masks_arr[t]
+        m_a = mean_tissue(img_a, mask)
+        if img_b is not None:
+            m_b = mean_tissue(img_b, mask)
+            vals.append((m_a + m_b) / 2)
+        else:
+            vals.append(m_a)
+    mean_per_acq[acq] = vals
+
+n_acqs = len(mean_per_acq)
+width_m = 0.6 / n_acqs
+offsets_m = np.arange(n_acqs) * width_m - (n_acqs - 1) * width_m / 2
+colors_m = plt.get_cmap('plasma')(np.linspace(0, 1, n_acqs))
+
+fig, ax_mean = plt.subplots(figsize=(9, 5))
+for idx, (acq, vals) in enumerate(mean_per_acq.items()):
+    bars = ax_mean.bar(x + offsets_m[idx], vals, width_m, label=acq, color=colors_m[idx])
+    for bar, v in zip(bars, vals):
+        ax_mean.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                     f"{v:.4f}", ha='center', va='bottom', fontsize=7)
+ax_mean.set_xticks(x)
+ax_mean.set_xticklabels(tissue_names_masks)
+ax_mean.set_ylabel("Mean ADC (×10⁻³ mm²/s)")
+ax_mean.set_title("Mean ADC per tissue by acquisition\n(SSE / MSE averaged over blip-up and blip-down)")
+ax_mean.legend()
 plt.tight_layout()
 plt.show()
 
