@@ -11,6 +11,8 @@ simulation/simulated/t2_img/*
 simulation/simulated/seq/*
 simulation/simulated/topupADC/*
 simulation/simulated/topupT2/*
+simulation/simulated/figs/*
+simulation/simulated/volumes/*
 
 # =======================================================================================
 # FROM TEMPLATE

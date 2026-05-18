@@ -38,6 +38,8 @@ def run_t2_sse(
     big_DELTA: float = 0.03,
     system_type=None,
     use_gpu: Optional[bool] = None,
+    save_slice_npy: bool = True,
+    phantom_slice: Optional[tuple] = None,
 ) -> dict:
     """Run the single-shot SE EPI T2-relaxometry simulation (b=0 series)."""
     paths.ensure_dirs()
@@ -59,11 +61,14 @@ def run_t2_sse(
     Nx = Ny = int(fov / slice_thickness)
     blip_tag = "blipdown" if blip_down else "blipup"
 
-    phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
+    if phantom_slice is not None:
+        phantom, phantom_data, tissue_masks = phantom_slice
+    else:
+        phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
     reconstructed_b0 = []  # one complex image per TE
     for te in TEs:
-        print(f"[T2-SSE] TE={te} ms")
+        print(f"[T2-SSE] TE={te} ms", flush=True, end="\r")
         name = f"DiffSE-TE{int(te)}-{blip_tag}"
         seq = EPIDiffusionSEPulseqSeq(
             name=name,
@@ -98,7 +103,6 @@ def run_t2_sse(
             gpu_min_emit=1e-5,
             cpu_max_states=2000,
             cpu_min_emit=1e-4,
-            print_progress=use_gpu,
         )
 
         samples_per_cal = int(3 * seq.adc.num_samples)
@@ -120,7 +124,7 @@ def run_t2_sse(
         traj_dir0 = traj[:samples_per_dir]
 
         op = get_operator(
-            backend_name="finufft",
+            backend_name="cufinufft",
             samples=traj_dir0,
             shape=(Ny, Nx),
             n_coils=1,
@@ -143,11 +147,12 @@ def run_t2_sse(
     t2_ll, _ = create_t2_map(mag_b0, TEs, method="loglinear")
 
     t2_nlls_oriented = np.rot90(t2_nlls, -1) / 1000.0
-    out_path = os.path.join(
-        paths.volumes_dir, f"{paths.phantom_name}-T2_SSE_{blip_tag}.npy"
-    )
-    np.save(out_path, t2_nlls_oriented)
-    print(f"[T2-SSE] saved {out_path}")
+    if save_slice_npy:
+        out_path = os.path.join(
+            paths.volumes_dir, f"{paths.phantom_name}-T2_SSE_{blip_tag}.npy"
+        )
+        np.save(out_path, t2_nlls_oriented)
+        print(f"[T2-SSE] saved {out_path}")
 
     # MAE per tissue + combined. phantom.T2 is in seconds; t2_nlls is in ms.
     ref_T2 = phantom_map_to_2d(phantom.T2)

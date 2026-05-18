@@ -36,6 +36,8 @@ def run_adc_sse(
     big_DELTA: Optional[float] = None,
     system_type=None,
     use_gpu: Optional[bool] = None,
+    save_slice_npy: bool = True,
+    phantom_slice: Optional[tuple] = None,
 ) -> dict:
     """Run the single-shot SE EPI diffusion / ADC simulation.
 
@@ -61,13 +63,16 @@ def run_adc_sse(
     Nx = Ny = int(fov / slice_thickness)
     blip_tag = "blipdown" if blip_down else "blipup"
 
-    phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
+    if phantom_slice is not None:
+        phantom, phantom_data, tissue_masks = phantom_slice
+    else:
+        phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
     all_echo_images = []  # one entry per b-value: (n_dirs, n_echoes, Ny, Nx)
     last_seq = None
 
     for b_value in b_values:
-        print(f"[ADC-SSE] b={b_value} s/mm²  TE={TE} ms")
+        print(f"[ADC-SSE] b={b_value} s/mm²  TE={TE} ms", flush=True, end="\r")
         name = f"DiffSE-b{int(b_value)}-TE{TE}"
         seq = EPIDiffusionSEPulseqSeq(
             name=name,
@@ -98,7 +103,6 @@ def run_adc_sse(
             os.path.join(paths.sequences_dir, f"{name}.seq"),
             phantom_data,
             use_gpu,
-            print_progress=use_gpu,
         )
 
         # Separate k-spaces (skip calibration prefix)
@@ -129,10 +133,11 @@ def run_adc_sse(
         )
 
         # NUFFT reconstruction (per direction)
+        _nufft_backend = "cufinufft" if use_gpu else "finufft"
         recon = []
         for i in range(n_dirs):
             op = get_operator(
-                backend_name="finufft",
+                backend_name=_nufft_backend,
                 samples=dir_trajs[i],
                 shape=(Ny, Nx),
                 n_coils=1,
@@ -164,11 +169,12 @@ def run_adc_sse(
     )
 
     adc_nlls_oriented = np.rot90(adc_nlls, -1) * 1e3
-    out_path = os.path.join(
-        paths.volumes_dir, f"{paths.phantom_name}-ADC_SSE_{blip_tag}.npy"
-    )
-    np.save(out_path, adc_nlls_oriented)
-    print(f"[ADC-SSE] saved {out_path}")
+    if save_slice_npy:
+        out_path = os.path.join(
+            paths.volumes_dir, f"{paths.phantom_name}-ADC_SSE_{blip_tag}.npy"
+        )
+        np.save(out_path, adc_nlls_oriented)
+        print(f"[ADC-SSE] saved {out_path}")
 
     # MAE per tissue + combined. Both maps in x10^-3 mm^2/s units.
     ref_D = phantom_map_to_2d(phantom.D)

@@ -38,6 +38,8 @@ def run_adc_multishot(
     big_DELTA: Optional[float] = None,
     system_type=None,
     use_gpu: Optional[bool] = None,
+    save_slice_npy: bool = True,
+    phantom_slice: Optional[tuple] = None,
 ) -> dict:
     """Run the multishot SE diffusion / ADC simulation.
 
@@ -65,7 +67,10 @@ def run_adc_multishot(
     slice_thickness = res * 1e-3
     Nx = Ny = int(fov / slice_thickness)
 
-    phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
+    if phantom_slice is not None:
+        phantom, phantom_data, tissue_masks = phantom_slice
+    else:
+        phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
     images_per_te = {te: [] for te in TE_values}
     n_dirs: Optional[int] = None
@@ -108,7 +113,7 @@ def run_adc_multishot(
                 gpu_min_emit=1e-6,
                 cpu_max_states=5000,
                 cpu_min_emit=1e-5,
-                print_progress=use_gpu,
+
             )
             assert signal.shape[0] == n_dirs * Ny * Nx
 
@@ -147,10 +152,11 @@ def run_adc_multishot(
 
     adc_nlls_oriented = np.fliplr(adc_nlls) * 1e3
     adc_ref_oriented = np.fliplr(adc_ll) * 1e3  # placeholder, kept for parity
-    np.save(
-        os.path.join(paths.volumes_dir, f"{paths.phantom_name}-ADC_multishot_se.npy"),
-        adc_nlls_oriented,
-    )
+    if save_slice_npy:
+        np.save(
+            os.path.join(paths.volumes_dir, f"{paths.phantom_name}-ADC_multishot_se.npy"),
+            adc_nlls_oriented,
+        )
     save_tissue_masks(tissue_masks, paths.masks_dir, paths.phantom_name)
     print(
         f"[ADC-MS] saved ADC map to {paths.volumes_dir}"

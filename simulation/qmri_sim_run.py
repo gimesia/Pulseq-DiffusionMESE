@@ -7,7 +7,7 @@ Typical usage
     paths = PathConfig(
         seq_lib_path = r"C:\\...\\Pulseq-DiffusionMESE\\pulseq_diffusion_mese",
         phantoms_dir = r"C:\\...\\Pulseq-DiffusionMESE\\brainweb_phantoms",
-        phantom_name = "brainweb_phantom_0",
+        phantom_name = "brainweb-subj04",
         sequences_dir = r".\\simulated\\seq",
         volumes_dir   = r".\\simulated\\brainmaps",
         masks_dir     = r".\\simulated\\masks",
@@ -18,11 +18,20 @@ Typical usage
 """
 from __future__ import annotations
 
+import os
+import time
 from typing import Iterable, Optional, Sequence
 
 import numpy as np
 
-from qmri_sim_lib import PathConfig
+from qmri_sim_lib import (
+    PathConfig,
+    PreloadedPhantom,
+    extract_phantom_slice,
+    load_phantom_for_sim,
+    phantom_map_to_2d,
+    save_magnitude_nifti,
+)
 from qmri_sim_adc_sse import run_adc_sse
 from qmri_sim_t2_sse import run_t2_sse
 from qmri_sim_adc_multishot import run_adc_multishot
@@ -44,6 +53,7 @@ DEFAULT_T2_TES = (
 
 # Default TE1 list for the triple SE T2 pipeline (each TR yields 3 echoes).
 DEFAULT_T2_TRIPLE_TE1 = tuple(range(65, 155, 5))
+DEFAULT_ADC_BVALUES = tuple(range(0, 2001, 100))
 
 
 def run_all_qmri_simulations(
@@ -53,7 +63,7 @@ def run_all_qmri_simulations(
     system_type=None,
     fov: float = 224e-3,
     res: float = 2.33333333,
-    b_values: Sequence[int] = tuple(range(0, 2001, 100)),
+    b_values: Sequence[int] = DEFAULT_ADC_BVALUES,
     TEs_t2: Sequence[int] = DEFAULT_T2_TES,
     TE1_values_triple: Sequence[int] = DEFAULT_T2_TRIPLE_TE1,
     TE_adc: int = 100,
@@ -67,6 +77,8 @@ def run_all_qmri_simulations(
     blip_down: bool = True,
     use_gpu: Optional[bool] = None,
     pipelines: Optional[Iterable[str]] = None,
+    save_slice_npy: bool = True,
+    preloaded_phantom: Optional[PreloadedPhantom] = None,
 ) -> dict:
     """Run all qMRI simulations and return their results in a dict.
 
@@ -120,6 +132,21 @@ def run_all_qmri_simulations(
     paths.ensure_dirs()
     b_values = np.asarray(b_values, dtype=int)
 
+    # Extract the phantom slice once and share it across all pipelines.
+    # When called standalone (no preloaded phantom) load from disk now so that
+    # (a) each pipeline does not reload independently and (b) reference maps
+    # can be saved before any simulation runs.
+    if preloaded_phantom is not None:
+        _phantom_slice = extract_phantom_slice(preloaded_phantom, slice_idx)
+    else:
+        _phantom_slice = load_phantom_for_sim(paths, res, slice_idx)
+        _phantom_obj = _phantom_slice[0]
+        _ref_D  = phantom_map_to_2d(_phantom_obj.D)
+        _ref_T2 = phantom_map_to_2d(_phantom_obj.T2)
+        save_magnitude_nifti(_ref_D,  os.path.join(paths.volumes_dir, f"{paths.phantom_name}-D_ref.nii.gz"),  res)
+        save_magnitude_nifti(_ref_T2, os.path.join(paths.volumes_dir, f"{paths.phantom_name}-T2_ref.nii.gz"), res)
+        print(f"[ref] saved D_ref and T2_ref  shape={_ref_D.shape}")
+
     common = dict(
         slice_idx=slice_idx,
         system_type=system_type,
@@ -127,11 +154,15 @@ def run_all_qmri_simulations(
         res=res,
         TR=TR,
         use_gpu=use_gpu,
+        save_slice_npy=save_slice_npy,
+        phantom_slice=_phantom_slice,
     )
 
     results: dict = {}
+    _timings: dict[str, float] = {}
 
     if "adc_sse" in pipelines:
+        _t0 = time.perf_counter()
         results["adc_sse"] = run_adc_sse(
             paths,
             b_values=b_values,
@@ -142,8 +173,10 @@ def run_all_qmri_simulations(
             big_DELTA=big_DELTA,
             **common,
         )
+        _timings["adc_sse"] = time.perf_counter() - _t0
 
     if "t2_sse" in pipelines:
+        _t0 = time.perf_counter()
         results["t2_sse"] = run_t2_sse(
             paths,
             TEs=TEs_t2,
@@ -153,8 +186,10 @@ def run_all_qmri_simulations(
             big_DELTA=big_DELTA_t2,
             **common,
         )
+        _timings["t2_sse"] = time.perf_counter() - _t0
 
     if "adc_multishot" in pipelines:
+        _t0 = time.perf_counter()
         results["adc_multishot"] = run_adc_multishot(
             paths,
             b_values=b_values,
@@ -166,16 +201,20 @@ def run_all_qmri_simulations(
             big_DELTA=big_DELTA,
             **common,
         )
+        _timings["adc_multishot"] = time.perf_counter() - _t0
 
     if "t2_multishot" in pipelines:
+        _t0 = time.perf_counter()
         results["t2_multishot"] = run_t2_multishot(
             paths,
             TEs=TEs_t2,
             ETL=ETL,
             **common,
         )
+        _timings["t2_multishot"] = time.perf_counter() - _t0
 
     if "adc_triple" in pipelines:
+        _t0 = time.perf_counter()
         results["adc_triple"] = run_adc_triple(
             paths,
             b_values=b_values,
@@ -186,8 +225,10 @@ def run_all_qmri_simulations(
             big_DELTA=big_DELTA,
             **common,
         )
+        _timings["adc_triple"] = time.perf_counter() - _t0
 
     if "t2_triple" in pipelines:
+        _t0 = time.perf_counter()
         results["t2_triple"] = run_t2_triple(
             paths,
             TE1_values=TE1_values_triple,
@@ -197,5 +238,37 @@ def run_all_qmri_simulations(
             big_DELTA=big_DELTA_t2,
             **common,
         )
+        _timings["t2_triple"] = time.perf_counter() - _t0
 
+    results["_timings"] = _timings
     return results
+
+
+if __name__ == "__main__":
+    import os
+
+    _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    paths = PathConfig(
+        seq_lib_path  = os.path.join(_ROOT, "pulseq_diffusion_mese"),
+        phantoms_dir  = os.path.join(_ROOT, "brainweb_phantoms"),
+        phantom_name  = "brainweb-subj04",
+        sequences_dir = os.path.join(_ROOT, "simulation", "simulated", "seq"),
+        volumes_dir   = os.path.join(_ROOT, "simulation", "simulated", "brainmaps"),
+        masks_dir     = os.path.join(_ROOT, "simulation", "simulated", "masks"),
+        diff_img_dir  = os.path.join(_ROOT, "simulation", "simulated", "diff_img"),
+        t2_img_dir    = os.path.join(_ROOT, "simulation", "simulated", "t2_img"),
+    )
+
+    results = run_all_qmri_simulations(
+        paths,
+        slice_idx=None,                    # None → centre slice
+        b_values=range(0, 1001, 200),      # 6 b-values — reduce for a quick test
+        pipelines=("adc_sse", "t2_sse"),   # remove kwarg to run all 6 pipelines
+    )
+
+    for pipe, res in results.items():
+        if pipe.startswith("_"):
+            continue
+        per_t = ", ".join(f"{k}={v:.4f}" for k, v in res["mae_per_tissue"].items())
+        print(f"{pipe:<14}  MAE={res['mae_total']:.4f}  [{per_t}]")

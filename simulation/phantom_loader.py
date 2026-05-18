@@ -19,6 +19,7 @@ Usage
 #%%
 from __future__ import annotations
 
+import math
 import os
 from copy import deepcopy
 import matplotlib.pyplot as plt
@@ -184,6 +185,152 @@ def _match_fov(
 # ──────────────────────────────────────────────────────────────────────────────
 #  Public API
 # ──────────────────────────────────────────────────────────────────────────────
+
+def load_phantom_preloaded(
+    json_path: str,
+    fov_mm: float = 224.0,
+    resolution_mm: float = 224.0 / 96,
+) -> tuple[mr0.VoxelGridPhantom, list[str], int]:
+    """Load and preprocess phantom up to (and including) interpolation — no slicing.
+
+    Returns ``(phantom_3d, tissue_names, nz)`` for repeated use with
+    :func:`slice_preloaded_phantom`. Avoids repeating the expensive disk-load,
+    combine, sanitize, pad and interpolate steps for every slice / pipeline.
+    """
+    if not os.path.isfile(json_path):
+        raise FileNotFoundError(f"Phantom JSON not found: {json_path}")
+
+    tissue_dict = mr0.TissueDict.load(json_path)
+    tissue_dict.pop("fat", None)
+    tissue_dict.pop("vessels", None)
+    tissue_names = list(tissue_dict.keys())
+    print(f"[preload]     tissues : {tissue_names}")
+    print(f"[preload]     native  : {next(iter(tissue_dict.values())).PD.shape}")
+
+    phantom = tissue_dict.combine()
+    for name, tissue in tissue_dict.items():
+        phantom.tissue_masks[name] = tissue.PD.clone()
+
+    phantom = _sanitize(phantom)
+    phantom = _pad_to_square_hw(phantom)
+    phantom = _match_fov(phantom, fov_mm)
+
+    nx = ny = round(fov_mm / resolution_mm)
+
+    # Snap z-FOV to the nearest ceil multiple of resolution_mm so that the
+    # interpolated voxel is isotropic.  BrainWeb z=181mm is not a multiple of
+    # 2.333mm (81/2.333 = 77.57), so without padding z-voxels would be
+    # 181/78 = 2.321mm while xy voxels are 224/96 = 2.333mm.
+    # Solution: zero-pad 2 native 0.5mm voxels in z (1 each side) → 182mm,
+    # then 78 × 2.333mm = 182mm exactly.
+    res_m = resolution_mm * 1e-3
+    z_fov_m = phantom.size[2].item()
+    nz = math.ceil(z_fov_m / res_m)
+    target_z_m = nz * res_m
+    if abs(target_z_m - z_fov_m) > 1e-9:
+        native_nz = phantom.PD.shape[2]
+        native_z_vox_m = z_fov_m / native_nz
+        n_add = round((target_z_m - z_fov_m) / native_z_vox_m)
+        if n_add > 0:
+            p0, p1 = n_add // 2, n_add - n_add // 2
+            zpad = (p0, p1, 0, 0, 0, 0)   # F.pad: last dim first
+
+            def _pz(t: torch.Tensor) -> torch.Tensor:
+                return F.pad(t, zpad, value=0.0)
+
+            p = deepcopy(phantom)
+            p.PD = _pz(phantom.PD)
+            p.T1 = _pz(phantom.T1)
+            p.T2 = _pz(phantom.T2)
+            p.T2dash = _pz(phantom.T2dash)
+            p.D = _pz(phantom.D)
+            p.B0 = _pz(phantom.B0)
+            p.B1 = torch.stack([_pz(phantom.B1[c]) for c in range(phantom.B1.shape[0])], dim=0)
+            p.coil_sens = torch.stack(
+                [_pz(phantom.coil_sens[c]) for c in range(phantom.coil_sens.shape[0])], dim=0
+            )
+            if phantom.tissue_masks:
+                p.tissue_masks = {k: _pz(v) for k, v in phantom.tissue_masks.items()}
+            new_size = phantom.size.clone()
+            new_size[2] = target_z_m
+            p.size = new_size
+            phantom = p
+            print(
+                f"[z-pad]       {native_nz} → {native_nz + n_add} z-voxels, "
+                f"z-FOV {z_fov_m*1e3:.2f} → {target_z_m*1e3:.2f} mm"
+            )
+
+    print(f"[preload]     grid NX=NY={nx}, NZ={nz}  (voxel {resolution_mm:.4f} mm isotropic)")
+    phantom = phantom.interpolate(nx, ny, nz)
+    print(f"[preload]     interpolated shape: {tuple(phantom.D.shape)}")
+
+    return phantom, tissue_names, nz
+
+
+def slice_preloaded_phantom(
+    phantom: mr0.VoxelGridPhantom,
+    tissue_names: list[str],
+    nz: int,
+    slice_idx: int | None = None,
+) -> tuple[mr0.VoxelGridPhantom, object, dict[str, torch.Tensor]]:
+    """Extract one slice from a preloaded phantom and build SimData.
+
+    Returns the same ``(phantom_slice, phantom_data, tissue_masks)`` tuple as
+    :func:`load_phantom`, so it is a drop-in replacement for per-slice calls.
+    Uses a deep-copy of the 3-D phantom before slicing so the caller can call
+    this function multiple times on the same preloaded object.
+    """
+    from copy import deepcopy
+
+    if slice_idx is None:
+        slice_idx = nz // 2
+
+    phantom_slice = deepcopy(phantom).slices([slice_idx])
+    print(f"[slice]       {slice_idx}/{nz}")
+
+    stacked = torch.stack(
+        [phantom_slice.tissue_masks[n].squeeze(-1).float() for n in tissue_names], dim=0
+    )
+    assignments = stacked.argmax(dim=0)
+    tissue_masks: dict[str, torch.Tensor] = {
+        name: (assignments == i) & (stacked[i] > 0.05)
+        for i, name in enumerate(tissue_names)
+    }
+
+    phantom_data = phantom_slice.build()
+
+    # Sanitize scalar-mean fields — compute_graph() takes torch.mean(data.T1/T2/…)
+    # and passes them to Rust; NaN there panics the Rust prepass.
+    for _attr in ("T1", "T2", "T2dash", "D"):
+        _t = getattr(phantom_data, _attr, None)
+        if _t is not None:
+            setattr(phantom_data, _attr,
+                    torch.nan_to_num(_t, nan=0.0, posinf=0.0, neginf=0.0))
+
+    # avg_B1_trig is also passed to Rust and is computed by build() via a PD-
+    # weighted mean — on near-empty edge slices PD≈0 → 0/0 → NaN even when B1
+    # has no NaN.  Sanitize unconditionally.
+    phantom_data.avg_B1_trig = torch.nan_to_num(
+        phantom_data.avg_B1_trig, nan=0.0, posinf=0.0, neginf=0.0
+    )
+
+    def _fix_complex(t: torch.Tensor, default_real: float = 1.0) -> torch.Tensor:
+        real = torch.nan_to_num(t.real, nan=default_real, posinf=default_real, neginf=0.0)
+        imag = torch.nan_to_num(t.imag, nan=0.0, posinf=0.0, neginf=0.0)
+        return torch.complex(real, imag)
+
+    b1_nans = phantom_data.B1.isnan().sum().item()
+    if b1_nans > 0:
+        phantom_data.B1 = _fix_complex(phantom_data.B1)
+        phantom_data.coil_sens = _fix_complex(phantom_data.coil_sens)
+        from MRzeroCore.phantom.sim_data import calc_avg_B1_trig
+        phantom_data.avg_B1_trig = calc_avg_B1_trig(phantom_data.B1, phantom_data.PD)
+        phantom_data.avg_B1_trig = torch.nan_to_num(
+            phantom_data.avg_B1_trig, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+    return phantom_slice, phantom_data, tissue_masks
+
 
 def load_phantom(
     json_path: str,

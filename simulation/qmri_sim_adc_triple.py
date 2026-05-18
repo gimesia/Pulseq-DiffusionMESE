@@ -1,6 +1,7 @@
 """Triple SE EPI ADC pipeline (refactor of qMRI_adc_triple_se.py)."""
 from __future__ import annotations
 
+import warnings
 import os
 from typing import Optional, Sequence
 
@@ -19,6 +20,7 @@ from qmri_sim_lib import (
     simulate_signal,
 )
 
+warnings.filterwarnings("ignore", category=DeprecationWarning, message="__array__")
 
 def run_adc_triple(
     paths: PathConfig,
@@ -35,6 +37,8 @@ def run_adc_triple(
     big_DELTA: Optional[float] = None,
     system_type=None,
     use_gpu: Optional[bool] = None,
+    save_slice_npy: bool = True,
+    phantom_slice: Optional[tuple] = None,
 ) -> dict:
     """Run the triple SE EPI diffusion / ADC simulation.
 
@@ -59,7 +63,10 @@ def run_adc_triple(
     Nx = Ny = int(fov / slice_thickness)
     blip_tag = "blipdown" if blip_down else "blipup"
 
-    phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
+    if phantom_slice is not None:
+        phantom, phantom_data, tissue_masks = phantom_slice
+    else:
+        phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
     all_echo_images = []
     te1_ms = te2_ms = te3_ms = None
@@ -110,7 +117,7 @@ def run_adc_triple(
             gpu_min_emit=1e-5,
             cpu_max_states=2000,
             cpu_min_emit=1e-4,
-            print_progress=use_gpu,
+
         )
 
         # Per-echo k-space split
@@ -151,11 +158,12 @@ def run_adc_triple(
 
         # One NUFFT operator per echo, reused across directions
         img_size = (Ny, Nx)
-        op_e1 = get_operator(backend_name="finufft", samples=traj_epi1, shape=img_size,
+        _nufft_backend = "cufinufft" if use_gpu else "finufft"
+        op_e1 = get_operator(backend_name=_nufft_backend, samples=traj_epi1, shape=img_size,
                              n_coils=1, density=True)
-        op_e2 = get_operator(backend_name="finufft", samples=traj_epi2, shape=img_size,
+        op_e2 = get_operator(backend_name=_nufft_backend, samples=traj_epi2, shape=img_size,
                              n_coils=1, density=True)
-        op_e3 = get_operator(backend_name="finufft", samples=traj_epi3, shape=img_size,
+        op_e3 = get_operator(backend_name=_nufft_backend, samples=traj_epi3, shape=img_size,
                              n_coils=1, density=True)
 
         dir_echo_images = []
@@ -195,11 +203,12 @@ def run_adc_triple(
     )
 
     adc_nlls_oriented = np.rot90(adc_nlls, -1) * 1e3
-    out_path = os.path.join(
-        paths.volumes_dir, f"{paths.phantom_name}-ADC_MSE_{blip_tag}.npy"
-    )
-    np.save(out_path, adc_nlls_oriented)
-    print(f"[ADC-3SE] saved {out_path}")
+    if save_slice_npy:
+        out_path = os.path.join(
+            paths.volumes_dir, f"{paths.phantom_name}-ADC_MSE_{blip_tag}.npy"
+        )
+        np.save(out_path, adc_nlls_oriented)
+        print(f"[ADC-3SE] saved {out_path}")
 
     ref_D = phantom_map_to_2d(phantom.D)
     est_adc = adc_nlls * 1e3

@@ -10,6 +10,8 @@ Provides:
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
 import os
 import sys
@@ -86,6 +88,7 @@ def ensure_seq_path_on_syspath(seq_lib_path: str) -> None:
 
 
 def make_quiet_logger() -> logging.Logger:
+    logging.disable(logging.CRITICAL)
     logger = logging.getLogger()
     logger.setLevel(logging.FATAL)
     return logger
@@ -109,8 +112,6 @@ def load_phantom_for_sim(
 
     Returns ``(phantom, phantom_data, tissue_masks)``.
     """
-    # Imported lazily so that phantom_loader can be picked up from the
-    # working directory regardless of how this library is imported.
     import phantom_loader
 
     phantom_path = resolve_phantom_json(paths)
@@ -121,9 +122,87 @@ def load_phantom_for_sim(
     )
 
 
+@dataclass
+class PreloadedPhantom:
+    """Full 3-D interpolated phantom ready for repeated slice extraction.
+
+    Obtain via :func:`preload_phantom_for_sim`; pass to
+    :func:`extract_phantom_slice` for each slice.
+    """
+    phantom: object          # mr0.VoxelGridPhantom, full 3-D post-interpolation
+    tissue_names: list
+    nz: int
+
+
+def preload_phantom_for_sim(
+    paths: PathConfig,
+    fov_m: float = 224e-3,
+    resolution_mm: float = 224.0 / 96,
+) -> PreloadedPhantom:
+    """Load and preprocess the phantom once (no slicing).
+
+    Call this once before a volume loop, then use :func:`extract_phantom_slice`
+    per slice instead of :func:`load_phantom_for_sim`.
+    """
+    import phantom_loader
+
+    phantom, tissue_names, nz = phantom_loader.load_phantom_preloaded(
+        json_path=resolve_phantom_json(paths),
+        fov_mm=fov_m * 1e3,
+        resolution_mm=resolution_mm,
+    )
+    return PreloadedPhantom(phantom=phantom, tissue_names=tissue_names, nz=nz)
+
+
+def extract_phantom_slice(
+    preloaded: PreloadedPhantom,
+    slice_idx: Optional[int],
+):
+    """Extract one slice from a preloaded phantom.
+
+    Returns the same ``(phantom, phantom_data, tissue_masks)`` tuple as
+    :func:`load_phantom_for_sim`.
+    """
+    import phantom_loader
+
+    return phantom_loader.slice_preloaded_phantom(
+        preloaded.phantom,
+        preloaded.tissue_names,
+        preloaded.nz,
+        slice_idx=slice_idx,
+    )
+
+
 # ----------------------------------------------------------------------------
 #  Simulation
 # ----------------------------------------------------------------------------
+@contextlib.contextmanager
+def _suppress_c_stdout():
+    """Redirect C-level file descriptor 1 to devnull.
+
+    compute_graph() prints >>>> Rust >>>> timing lines directly to the C
+    runtime's stdout — Python's logging/redirect_stdout cannot intercept them.
+    os.dup2 works at the OS level and suppresses any C/Rust write to fd 1.
+    Falls back to a no-op when stdout has no real file descriptor (IDEs, etc.).
+    """
+    sys.stdout.flush()
+    try:
+        fd = sys.stdout.fileno()
+    except io.UnsupportedOperation:
+        yield
+        return
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    old_fd = os.dup(fd)
+    os.dup2(devnull_fd, fd)
+    os.close(devnull_fd)
+    try:
+        yield
+    finally:
+        sys.stdout.flush()
+        os.dup2(old_fd, fd)
+        os.close(old_fd)
+
+
 def simulate_signal(
     seq_file_path: str,
     phantom_data,
@@ -133,7 +212,6 @@ def simulate_signal(
     gpu_min_emit: float = 1e-6,
     cpu_max_states: int = 5000,
     cpu_min_emit: float = 1e-5,
-    print_progress: bool = False,
 ):
     """Build the MR0 graph for the .seq file and execute it.
 
@@ -143,16 +221,18 @@ def simulate_signal(
     if use_gpu:
         seq0_gpu = seq0.cuda()
         phantom_gpu = phantom_data.cuda()
-        graph = mr0.compute_graph(seq0_gpu, phantom_gpu, gpu_max_states, gpu_min_emit)
+        with _suppress_c_stdout():
+            graph = mr0.compute_graph(seq0_gpu, phantom_gpu, gpu_max_states, gpu_min_emit)
         signal = mr0.execute_graph(
-            graph, seq0_gpu, phantom_gpu, print_progress=print_progress
+            graph, seq0_gpu, phantom_gpu, print_progress=False
         ).cpu()
         del seq0_gpu, phantom_gpu
         torch.cuda.empty_cache()
     else:
         phantom_cpu = phantom_data.cpu()
-        graph = mr0.compute_graph(seq0, phantom_cpu, cpu_max_states, cpu_min_emit)
-        signal = mr0.execute_graph(graph, seq0, phantom_cpu, print_progress=print_progress)
+        with _suppress_c_stdout():
+            graph = mr0.compute_graph(seq0, phantom_cpu, cpu_max_states, cpu_min_emit)
+        signal = mr0.execute_graph(graph, seq0, phantom_cpu, print_progress=False)
     return signal
 
 

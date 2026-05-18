@@ -36,6 +36,8 @@ def run_t2_multishot(
     ETL: int = 1,
     system_type=None,
     use_gpu: Optional[bool] = None,
+    save_slice_npy: bool = True,
+    phantom_slice: Optional[tuple] = None,
 ) -> dict:
     """Run the multishot SE T2-relaxometry simulation (Cartesian → iFFT)."""
     paths.ensure_dirs()
@@ -56,7 +58,10 @@ def run_t2_multishot(
     slice_thickness = res * 1e-3
     Nx = Ny = int(fov / slice_thickness)
 
-    phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
+    if phantom_slice is not None:
+        phantom, phantom_data, tissue_masks = phantom_slice
+    else:
+        phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
     reconstructed_images = []
     for te in TEs:
@@ -87,7 +92,7 @@ def run_t2_multishot(
             gpu_min_emit=1e-5,
             cpu_max_states=2000,
             cpu_min_emit=1e-4,
-            print_progress=use_gpu,
+
         )
 
         kspace = signal.numpy().reshape(Ny, Nx)
@@ -106,10 +111,11 @@ def run_t2_multishot(
     t2_ll, _ = create_t2_map(images_stack, TEs, method="loglinear")
 
     t2_nlls_oriented = np.fliplr(np.rot90(t2_nlls, 0)) / 1000.0
-    np.save(
-        os.path.join(paths.volumes_dir, f"{paths.phantom_name}-T2_multishot_se.npy"),
-        t2_nlls_oriented,
-    )
+    if save_slice_npy:
+        np.save(
+            os.path.join(paths.volumes_dir, f"{paths.phantom_name}-T2_multishot_se.npy"),
+            t2_nlls_oriented,
+        )
     save_tissue_masks(tissue_masks, paths.masks_dir, paths.phantom_name)
     print(f"[T2-MS] saved T2 map to {paths.volumes_dir}")
 
