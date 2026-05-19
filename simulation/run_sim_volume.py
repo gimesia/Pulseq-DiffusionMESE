@@ -132,9 +132,11 @@ def run_all_qmri_simulations_volume(
     preloaded = preload_phantom_for_sim(paths, fov_m=fov, resolution_mm=res)
 
     # Save ground-truth reference volumes before any simulation runs.
-    # Rotate each axial (Ny,Nx) slice 90° CW — matching the SSE per-slice convention.
-    _d_ref  = np.rot90(preloaded.phantom.D.cpu().numpy(),  k=-1, axes=(0, 1))
-    _t2_ref = np.rot90(preloaded.phantom.T2.cpu().numpy(), k=-1, axes=(0, 1))
+    # y-flip (axis=1) matches the transform the volume-save pipeline applies to
+    # estimated maps: rot90(k=-1, axes=(1,2)) + transpose((1,2,0)) gives
+    # nifti[ix, iy, iz] = phantom.D[ix, N-1-iy, iz].
+    _d_ref  = np.flip(preloaded.phantom.D.cpu().numpy(),  axis=1).copy()
+    _t2_ref = np.flip(preloaded.phantom.T2.cpu().numpy(), axis=1).copy()
     _save_volume_nifti(_d_ref,  os.path.join(paths.volumes_dir, f"{paths.phantom_name}-D_ref_volume.nii.gz"),  res)
     _save_volume_nifti(_t2_ref, os.path.join(paths.volumes_dir, f"{paths.phantom_name}-T2_ref_volume.nii.gz"), res)
     print(f"[volume] saved D_ref_volume and T2_ref_volume  shape={_d_ref.shape}", flush=True)
@@ -289,6 +291,28 @@ def run_all_qmri_simulations_volume(
         )
         print(f"  {p:<14} total={s['mae_total_volume']:.4f}  [{per_t}]", flush=True)
 
+    # Save tissue masks as NIfTI volumes using the first pipeline's masks
+    # (all pipelines share the same phantom, so masks are identical).
+    # Apply the same rot90(k=-1, axes=(1,2)) + transpose((1,2,0)) as estimated maps.
+    if save_volume_nifti:
+        _first_p = pipelines[0]
+        if "tissue_masks" in vol[_first_p]:
+            for _tname, _mask_vol in vol[_first_p]["tissue_masks"].items():
+                _m = np.rot90(_mask_vol.astype(np.float32), k=-1, axes=(1, 2))
+                _m = np.transpose(_m, (1, 2, 0))
+                _save_volume_nifti(
+                    _m,
+                    os.path.join(
+                        paths.masks_dir,
+                        f"{paths.phantom_name}-mask_{_tname}_volume.nii.gz",
+                    ),
+                    res,
+                )
+            print(
+                f"[volume] saved {len(vol[_first_p]['tissue_masks'])} tissue mask NIfTI files",
+                flush=True,
+            )
+
     return out
 
 
@@ -307,7 +331,7 @@ if __name__ == "__main__":
         diff_img_dir  = os.path.join(_ROOT, "simulation", "simulated", "diff_img"),
         t2_img_dir    = os.path.join(_ROOT, "simulation", "simulated", "t2_img"),
     )
-    
+
     pipelines = ("adc_triple", "t2_triple", "adc_multishot", "t2_multishot", "adc_sse", "t2_sse")  
     results = run_all_qmri_simulations_volume(
         paths,

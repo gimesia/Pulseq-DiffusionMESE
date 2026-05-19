@@ -144,7 +144,7 @@ def run_adc_sse(
                 density=True,
             )
             sig = torch.from_numpy(dir_signal[i]).to(torch.complex64)
-            img_complex = op.adj_op(sig.flatten()).squeeze().cpu().numpy()
+            img_complex = op.adj_op(sig.flatten()).squeeze().cpu().numpy().T
             recon.append(img_complex)
 
             nii_name = (
@@ -168,7 +168,7 @@ def run_adc_sse(
         mag_images_combined, b_values, last_seq.b_directions
     )
 
-    adc_nlls_oriented = np.rot90(adc_nlls, -1) * 1e3
+    adc_nlls_oriented = adc_nlls * 1e3
     if save_slice_npy:
         out_path = os.path.join(
             paths.volumes_dir, f"{paths.phantom_name}-ADC_SSE_{blip_tag}.npy"
@@ -182,7 +182,7 @@ def run_adc_sse(
     mae = compute_mae_per_tissue(est_adc, ref_D, tissue_masks)
 
     return {
-        "adc_nlls": adc_nlls,
+        "adc_nlls": adc_nlls_oriented,
         "adc_loglinear": adc_ll,
         "fa_map": fa_map,
         "md_map": md_map,

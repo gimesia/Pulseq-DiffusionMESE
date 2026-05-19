@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
-FIGS_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\figs"
+FIGS_PATH = r"C:\Users\gimes\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\figs"
 
 # ── Acquisition parameters ────────────────────────────────────────────────────
 Nx, Ny  = 96, 96
@@ -16,7 +16,7 @@ ESP     = 58              # ms, inter-echo spacing
 
 # Parameter space
 b_values = np.arange(0, 2001, 100, dtype=int)   # 21 b-values
-te1s     = np.arange(65, 155, 5, dtype=int)      # 18 TE1s
+te1s     = np.arange(65, 125, 5, dtype=int)      # 18 TE1s
 te2s     = te1s + ESP
 te3s     = te1s + 2 * ESP
 
@@ -95,7 +95,7 @@ labels = [s[0] for s in sequences]
 times  = np.array([s[1] for s in sequences])
 
 x = np.arange(len(labels))
-bars = ax2.bar(x, times / 3600, color=colors, width=0.5, alpha=0.85, zorder=3)
+bars = ax2.bar(x, times / 3600, color=colors, width=0.5, alpha=0.9, zorder=3)
 
 ax2.set_yscale("log")
 ax2.set_ylabel("Acquisition time [hours]")
@@ -116,15 +116,15 @@ ax2.grid(True, axis="y", which="both", alpha=0.3, zorder=0)
 for bar, t in zip(bars, times):
     ax2.text(
         bar.get_x() + bar.get_width() / 2,
-        bar.get_height() * 1.4,
+        bar.get_height() * 1.1,
         fmt_time(t),
-        ha="center", va="bottom", fontsize=9, fontweight="bold",
+        ha="center", va="bottom", fontsize=10, fontweight="bold",
     )
 
 
 
 plt.tight_layout()
-plt.savefig("acquisition_overview.png", dpi=150, bbox_inches="tight")
+plt.savefig(FIGS_PATH + r"\acquisition_overview.png", dpi=300, bbox_inches="tight")
 plt.show()
 
 # ── Console summary ───────────────────────────────────────────────────────────
@@ -145,4 +145,7 @@ print(f"{'Singleshot single-SE EPI':<30} {1:>10} {n_volumes_single:>10} "
       f"{n_volumes_single:>12} {fmt_time(t_singleshot_single):>12}")
 print(f"{'Singleshot triple-SE EPI':<30} {1:>10} {n_volumes_triple:>10} "
       f"{n_volumes_triple:>12} {fmt_time(t_singleshot_triple):>12}")
+print("\nSummary:")
+
+print(f"Total parameters by acquisition: {len(b_values)*(len(te1s)*3)}")
 # %%

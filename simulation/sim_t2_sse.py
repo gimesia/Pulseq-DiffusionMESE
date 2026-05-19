@@ -131,7 +131,7 @@ def run_t2_sse(
             density=True,
         )
         sig = torch.from_numpy(dir_signal[0]).to(torch.complex64)
-        img_complex = op.adj_op(sig.flatten()).squeeze().cpu().numpy()
+        img_complex = op.adj_op(sig.flatten()).squeeze().cpu().numpy().T
         reconstructed_b0.append(img_complex)
 
         save_magnitude_nifti(
@@ -146,7 +146,7 @@ def run_t2_sse(
     t2_nlls, _ = create_t2_map(mag_b0, TEs, method="nlls")
     t2_ll, _ = create_t2_map(mag_b0, TEs, method="loglinear")
 
-    t2_nlls_oriented = np.rot90(t2_nlls, -1) / 1000.0
+    t2_nlls_oriented = t2_nlls / 1000.0
     if save_slice_npy:
         out_path = os.path.join(
             paths.volumes_dir, f"{paths.phantom_name}-T2_SSE_{blip_tag}.npy"
@@ -160,7 +160,7 @@ def run_t2_sse(
     mae = compute_mae_per_tissue(est_T2, ref_T2, tissue_masks)
 
     return {
-        "t2_nlls": t2_nlls,
+        "t2_nlls": t2_nlls_oriented,
         "t2_loglinear": t2_ll,
         "TEs": TEs,
         "reference_map": ref_T2,

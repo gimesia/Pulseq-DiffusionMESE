@@ -167,12 +167,12 @@ def run_adc_multishot(
     mae = compute_mae_per_tissue(est_adc, ref_D, tissue_masks)
 
     return {
-        "adc_nlls": adc_nlls,
+        "adc_nlls": adc_nlls_oriented,
         "adc_loglinear": adc_ll,
         "fa_map": fa_map,
         "md_map": md_map,
         "b_values": b_values,
-        "reference_map": ref_D,
+        "reference_map": adc_ref_oriented,
         "tissue_masks": tissue_masks,
         "mae_per_tissue": mae["per_tissue"],
         "mae_total": mae["total"],

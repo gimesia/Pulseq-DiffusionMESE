@@ -175,7 +175,7 @@ def run_adc_triple(
                 (echo3_ks[d], op_e3),
             ):
                 sig_t = torch.from_numpy(np.array(ksp)).to(torch.complex64)
-                imgs.append(op.adj_op(sig_t.flatten()).squeeze().cpu().numpy())
+                imgs.append(op.adj_op(sig_t.flatten()).squeeze().cpu().numpy().T)
             dir_echo_images.append(np.stack(imgs, axis=0))  # (3, Ny, Nx)
 
             for echo_idx, te_ms_echo in enumerate([te1_ms, te2_ms, te3_ms]):
@@ -202,7 +202,7 @@ def run_adc_triple(
         mag_images_combined, b_values, last_seq.b_directions
     )
 
-    adc_nlls_oriented = np.rot90(adc_nlls, -1) * 1e3
+    adc_nlls_oriented = adc_nlls * 1e3
     if save_slice_npy:
         out_path = os.path.join(
             paths.volumes_dir, f"{paths.phantom_name}-ADC_MSE_{blip_tag}.npy"
@@ -215,7 +215,7 @@ def run_adc_triple(
     mae = compute_mae_per_tissue(est_adc, ref_D, tissue_masks)
 
     return {
-        "adc_nlls": adc_nlls,
+        "adc_nlls": adc_nlls_oriented,
         "adc_loglinear": adc_ll,
         "fa_map": fa_map,
         "md_map": md_map,

@@ -157,7 +157,7 @@ def run_t2_triple(
                 density=True,
             )
             sig_t = ksp.to(torch.complex64)
-            echo_imgs.append(op.adj_op(sig_t.flatten()).squeeze().cpu().numpy())
+            echo_imgs.append(op.adj_op(sig_t.flatten()).squeeze().cpu().numpy().T)
 
         for img, te_ms in zip(echo_imgs, (te1_ms, te2_ms, te3_ms)):
             mag_img = np.abs(img)
@@ -173,7 +173,7 @@ def run_t2_triple(
     t2_nlls, _ = create_t2_map(images_stack, te_sorted, method="nlls")
     t2_ll, _ = create_t2_map(images_stack, te_sorted, method="loglinear")
 
-    t2_nlls_oriented = np.rot90(t2_nlls, -1) / 1000.0
+    t2_nlls_oriented = t2_nlls / 1000.0
     if save_slice_npy:
         out_path = os.path.join(
             paths.volumes_dir, f"{paths.phantom_name}-T2_MSE_{blip_tag}.npy"
@@ -186,7 +186,7 @@ def run_t2_triple(
     mae = compute_mae_per_tissue(est_T2, ref_T2, tissue_masks)
 
     return {
-        "t2_nlls": t2_nlls,
+        "t2_nlls": t2_nlls_oriented,
         "t2_loglinear": t2_ll,
         "TEs": te_sorted,
         "reference_map": ref_T2,

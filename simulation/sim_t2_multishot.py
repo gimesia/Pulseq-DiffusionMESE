@@ -124,7 +124,7 @@ def run_t2_multishot(
     mae = compute_mae_per_tissue(est_T2, ref_T2, tissue_masks)
 
     return {
-        "t2_nlls": t2_nlls,
+        "t2_nlls": t2_nlls_oriented,
         "t2_loglinear": t2_ll,
         "TEs": TEs,
         "reference_map": ref_T2,
