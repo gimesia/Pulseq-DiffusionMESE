@@ -2,7 +2,7 @@
 
 Typical usage
 -------------
-    from qmri_sim_run import run_all_qmri_simulations, PathConfig
+    from run_sim import run_all_qmri_simulations, PathConfig
 
     paths = PathConfig(
         seq_lib_path = r"C:\\...\\Pulseq-DiffusionMESE\\pulseq_diffusion_mese",
@@ -24,7 +24,7 @@ from typing import Iterable, Optional, Sequence
 
 import numpy as np
 
-from qmri_sim_lib import (
+from utils_sim_lib import (
     PathConfig,
     PreloadedPhantom,
     extract_phantom_slice,
@@ -32,12 +32,12 @@ from qmri_sim_lib import (
     phantom_map_to_2d,
     save_magnitude_nifti,
 )
-from qmri_sim_adc_sse import run_adc_sse
-from qmri_sim_t2_sse import run_t2_sse
-from qmri_sim_adc_multishot import run_adc_multishot
-from qmri_sim_t2_multishot import run_t2_multishot
-from qmri_sim_adc_triple import run_adc_triple
-from qmri_sim_t2_triple import run_t2_triple
+from sim_adc_sse import run_adc_sse
+from sim_t2_sse import run_t2_sse
+from sim_adc_multishot import run_adc_multishot
+from sim_t2_multishot import run_t2_multishot
+from sim_adc_triple import run_adc_triple
+from sim_t2_triple import run_t2_triple
 
 
 PIPELINES = ("adc_sse", "t2_sse", "adc_multishot", "t2_multishot", "adc_triple", "t2_triple")

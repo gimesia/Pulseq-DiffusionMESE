@@ -3,8 +3,8 @@ of a phantom and stack the per-pipeline results.
 
 Typical usage
 -------------
-    from qmri_sim_run_volume import run_all_qmri_simulations_volume
-    from qmri_sim_lib import PathConfig
+    from run_sim_volume import run_all_qmri_simulations_volume
+    from utils_sim_lib import PathConfig
 
     paths = PathConfig(...)
     results = run_all_qmri_simulations_volume(
@@ -26,8 +26,8 @@ from typing import Iterable, Optional, Sequence
 import nibabel as nib
 import numpy as np
 
-from qmri_sim_lib import PathConfig, PreloadedPhantom, preload_phantom_for_sim, probe_phantom_n_slices
-from qmri_sim_run import (
+from utils_sim_lib import PathConfig, PreloadedPhantom, preload_phantom_for_sim, probe_phantom_n_slices
+from run_sim import (
     DEFAULT_ADC_BVALUES,
     DEFAULT_T2_TES,
     DEFAULT_T2_TRIPLE_TE1,
@@ -188,7 +188,7 @@ def run_all_qmri_simulations_volume(
     save_volume_nifti:
         When ``True`` (default), save the stacked NLLS maps for each pipeline
         as ``<phantom_name>-<MAP>_<pipeline>_volume.nii.gz`` in ``paths.volumes_dir``.
-    See :func:`qmri_sim_run.run_all_qmri_simulations` for all other params.
+    See :func:`run_sim.run_all_qmri_simulations` for all other params.
 
     Returns
     -------
@@ -363,7 +363,7 @@ if __name__ == "__main__":
         t2_img_dir    = os.path.join(_ROOT, "simulation", "simulated", "t2_img"),
     )
     
-    pipelines = ("adc_triple", "t2_triple", "adc_multishot", "t2_multishot")  
+    pipelines = ("adc_triple", "t2_triple", "adc_multishot", "t2_multishot", "adc_sse", "t2_sse")  
     results = run_all_qmri_simulations_volume(
         paths,
         slice_indices=None,                # None → all slices; pass e.g. [55, 60, 65] to limit

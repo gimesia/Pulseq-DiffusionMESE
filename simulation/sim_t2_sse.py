@@ -7,7 +7,7 @@ from typing import Optional, Sequence
 import numpy as np
 import torch
 
-from qmri_sim_lib import (
+from utils_sim_lib import (
     PathConfig,
     compute_mae_per_tissue,
     ensure_seq_path_on_syspath,
