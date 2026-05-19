@@ -65,7 +65,7 @@ def run_t2_multishot(
 
     reconstructed_images = []
     for te in TEs:
-        print(f"[T2-MS] TE={te} ms")
+        print(f"[T2-MS] TE={te} ms", flush=True, end="\r")
         seq = DiffusionSEMultishotPulseqSeq(
             name="DiffusionSEMultishot",
             fov=fov,

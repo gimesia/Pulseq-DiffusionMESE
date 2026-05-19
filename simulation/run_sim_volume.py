@@ -47,12 +47,12 @@ def _fmt(seconds: float) -> str:
 # Per-pipeline list of map-like keys (2-D arrays) to stack across slices.
 # Anything not listed is collected as a Python list (preserves order).
 _MAP_KEYS = {
-    "adc_sse": ("adc_nlls", "adc_loglinear", "fa_map", "md_map", "reference_map"),
-    "t2_sse": ("t2_nlls", "t2_loglinear", "reference_map"),
-    "adc_multishot": ("adc_nlls", "adc_loglinear", "fa_map", "md_map", "reference_map"),
-    "t2_multishot": ("t2_nlls", "t2_loglinear", "reference_map"),
-    "adc_triple": ("adc_nlls", "adc_loglinear", "fa_map", "md_map", "reference_map"),
-    "t2_triple": ("t2_nlls", "t2_loglinear", "reference_map"),
+    "adc_sse": ("adc_nlls", "fa_map", "md_map", "reference_map"),
+    "t2_sse": ("t2_nlls", "reference_map"),
+    "adc_multishot": ("adc_nlls", "fa_map", "md_map", "reference_map"),
+    "t2_multishot": ("t2_nlls", "reference_map"),
+    "adc_triple": ("adc_nlls", "fa_map", "md_map", "reference_map"),
+    "t2_triple": ("t2_nlls", "reference_map"),
 }
 
 
@@ -61,98 +61,6 @@ def _save_volume_nifti(vol: np.ndarray, path: str, res_mm: float) -> None:
     affine = np.diag([res_mm, res_mm, res_mm, 1.0]).astype(np.float64)
     nib.save(nib.Nifti1Image(vol.astype(np.float32), affine), path)
 
-
-def _make_empty_slice_result(
-    pipeline: str, Nx: int, Ny: int, tissue_names: list[str]
-) -> dict:
-    """Zero/NaN result dict for a phantom slice that contains no tissue voxels."""
-    map_keys = _MAP_KEYS.get(pipeline, ())
-    result: dict = {k: np.zeros((Ny, Nx), dtype=np.float32) for k in map_keys}
-    result["mae_total"] = float("nan")
-    result["mae_per_tissue"] = {name: float("nan") for name in tissue_names}
-    result["mae_n_voxels_per_tissue"] = {name: 0 for name in tissue_names}
-    result["mae_n_voxels_total"] = 0
-    result["tissue_masks"] = {
-        name: np.zeros((Ny, Nx), dtype=bool) for name in tissue_names
-    }
-    return result
-
-
-def _stack_per_pipeline(slice_results: list[dict], pipeline: str) -> dict:
-    """Stack a pipeline's per-slice result dicts into volume-shaped arrays."""
-    out: dict = {}
-    map_keys = _MAP_KEYS.get(pipeline, ())
-
-    # Stack 2-D maps along the slice axis.
-    for key in map_keys:
-        if all(key in r for r in slice_results):
-            out[key] = np.stack([np.asarray(r[key]) for r in slice_results], axis=0)
-
-    # mae_total: 1-D vector across slices.
-    out["mae_total"] = np.array(
-        [r["mae_total"] for r in slice_results], dtype=float
-    )
-
-    # mae_per_tissue: dict[tissue, (n_slices,) array].
-    tissue_names = list(slice_results[0]["mae_per_tissue"].keys())
-    out["mae_per_tissue"] = {
-        name: np.array(
-            [r["mae_per_tissue"][name] for r in slice_results], dtype=float
-        )
-        for name in tissue_names
-    }
-    out["mae_n_voxels_per_tissue"] = {
-        name: np.array(
-            [r["mae_n_voxels_per_tissue"][name] for r in slice_results], dtype=int
-        )
-        for name in tissue_names
-    }
-    out["mae_n_voxels_total"] = np.array(
-        [r["mae_n_voxels_total"] for r in slice_results], dtype=int
-    )
-
-    # Whole-volume MAE: voxel-weighted average across slices.
-    n_tot = out["mae_n_voxels_total"]
-    m_tot = out["mae_total"]
-    valid_tot = np.isfinite(m_tot) & (n_tot > 0)
-    if valid_tot.any():
-        out["mae_total_volume"] = float(
-            np.sum(m_tot[valid_tot] * n_tot[valid_tot]) / n_tot[valid_tot].sum()
-        )
-    else:
-        out["mae_total_volume"] = float("nan")
-
-    out["mae_per_tissue_volume"] = {}
-    for name in tissue_names:
-        m = out["mae_per_tissue"][name]
-        n = out["mae_n_voxels_per_tissue"][name]
-        valid = np.isfinite(m) & (n > 0)
-        if valid.any():
-            out["mae_per_tissue_volume"][name] = float(
-                np.sum(m[valid] * n[valid]) / n[valid].sum()
-            )
-        else:
-            out["mae_per_tissue_volume"][name] = float("nan")
-
-    # Carry through fixed per-pipeline metadata from the first slice
-    # (b_values, TEs, etc. — identical across slices).
-    for key in ("b_values", "TEs", "echo_TEs_ms"):
-        if key in slice_results[0]:
-            out[key] = slice_results[0][key]
-
-    # tissue_masks per slice — keep them stacked as well.
-    if "tissue_masks" in slice_results[0]:
-        tm_names = list(slice_results[0]["tissue_masks"].keys())
-        tm_stacked: dict = {}
-        for name in tm_names:
-            arrs = []
-            for r in slice_results:
-                m = r["tissue_masks"][name]
-                arrs.append(m.cpu().numpy() if hasattr(m, "cpu") else np.asarray(m))
-            tm_stacked[name] = np.stack(arrs, axis=0)
-        out["tissue_masks"] = tm_stacked
-
-    return out
 
 
 def run_all_qmri_simulations_volume(
@@ -231,13 +139,25 @@ def run_all_qmri_simulations_volume(
     _save_volume_nifti(_t2_ref, os.path.join(paths.volumes_dir, f"{paths.phantom_name}-T2_ref_volume.nii.gz"), res)
     print(f"[volume] saved D_ref_volume and T2_ref_volume  shape={_d_ref.shape}", flush=True)
 
-    # Accumulate per-pipeline lists of per-slice result dicts.
-    per_pipeline_slices: dict[str, list[dict]] = {p: [] for p in pipelines}
     _t_adc_total = 0.0
     _t_t2_total  = 0.0
     _t_volume_start = time.perf_counter()
 
-    _Nx = _Ny = round(fov * 1e3 / res)
+    _Ny = _Nx = round(fov * 1e3 / res)
+    _n_slices = len(slice_indices)
+
+    # Pre-allocate output volumes (NaN-init so skipped slices stay as NaN).
+    vol: dict[str, dict] = {}
+    for _p in pipelines:
+        _d: dict = {}
+        for _key in _MAP_KEYS.get(_p, ()):
+            _d[_key] = np.full((_n_slices, _Ny, _Nx), np.nan, dtype=np.float32)
+        _d["mae_total"]          = np.full(_n_slices, np.nan, dtype=float)
+        _d["mae_n_voxels_total"] = np.zeros(_n_slices, dtype=int)
+        _d["mae_per_tissue"]          = {t: np.full(_n_slices, np.nan, dtype=float) for t in preloaded.tissue_names}
+        _d["mae_n_voxels_per_tissue"] = {t: np.zeros(_n_slices, dtype=int)          for t in preloaded.tissue_names}
+        _d["tissue_masks"]            = {t: np.zeros((_n_slices, _Ny, _Nx), dtype=bool) for t in preloaded.tissue_names}
+        vol[_p] = _d
 
     for s_idx, slice_idx in enumerate(slice_indices):
         print(
@@ -251,10 +171,6 @@ def run_all_qmri_simulations_volume(
         _pd_max = float(preloaded.phantom.PD[:, :, slice_idx].max())
         if _pd_max < 1e-9:
             print(f"[volume] slice {slice_idx} empty (PD_max={_pd_max:.1e}), filling NaN", flush=True)
-            for p in pipelines:
-                per_pipeline_slices[p].append(
-                    _make_empty_slice_result(p, _Nx, _Ny, preloaded.tissue_names)
-                )
             continue
 
         slice_res = run_all_qmri_simulations(
@@ -281,7 +197,21 @@ def run_all_qmri_simulations_volume(
             preloaded_phantom=preloaded,
         )
         for p in pipelines:
-            per_pipeline_slices[p].append(slice_res[p])
+            pr = slice_res[p]
+            for key in _MAP_KEYS.get(p, ()):
+                vol[p][key][s_idx] = pr[key]
+            vol[p]["mae_total"][s_idx]          = pr["mae_total"]
+            vol[p]["mae_n_voxels_total"][s_idx] = pr["mae_n_voxels_total"]
+            for name in preloaded.tissue_names:
+                vol[p]["mae_per_tissue"][name][s_idx]          = pr["mae_per_tissue"][name]
+                vol[p]["mae_n_voxels_per_tissue"][name][s_idx] = pr["mae_n_voxels_per_tissue"][name]
+                _tm = pr["tissue_masks"][name]
+                vol[p]["tissue_masks"][name][s_idx] = _tm.cpu().numpy() if hasattr(_tm, "cpu") else np.asarray(_tm)
+            if "_metadata_captured" not in vol[p]:
+                for key in ("b_values", "TEs", "echo_TEs_ms"):
+                    if key in pr:
+                        vol[p][key] = pr[key]
+                vol[p]["_metadata_captured"] = True
 
         # Per-slice timing breakdown
         _slice_timings = slice_res.get("_timings", {})
@@ -303,17 +233,14 @@ def run_all_qmri_simulations_volume(
             flush=True,
         )
 
-        # Incremental save: update volume NIfTI after every completed slice.
+        # Incremental save: slice into pre-allocated array — no re-stacking needed.
         if save_volume_nifti:
             for p in pipelines:
-                partial = _stack_per_pipeline(per_pipeline_slices[p], p)
                 map_key = "adc_nlls" if p.startswith("adc") else "t2_nlls"
-                if map_key in partial:
+                if map_key in vol[p]:
+                    partial = vol[p][map_key][:s_idx + 1]
                     fname = f"{paths.phantom_name}-{map_key.upper()}_{p}_volume.nii.gz"
-                    # partial[map_key]: (n_slices, Ny, Nx) — image space, z-first.
-                    # Rotate each 2-D slice 90° CW (matching the SSE per-slice
-                    # convention), then move the slice axis last → (Nx, Ny, n_slices).
-                    _m = np.rot90(partial[map_key], k=-1, axes=(1, 2))
+                    _m = np.rot90(partial, k=-1, axes=(1, 2))
                     _m = np.transpose(_m, (1, 2, 0))
                     _save_volume_nifti(_m, os.path.join(paths.volumes_dir, fname), res)
             print(
@@ -322,12 +249,30 @@ def run_all_qmri_simulations_volume(
                 flush=True,
             )
 
-    # Stack each pipeline for the final return value.
-    out: dict = {"slice_indices": np.asarray(slice_indices, dtype=int)}
+    slice_idx_arr = np.asarray(slice_indices, dtype=int)
+    np.save(os.path.join(paths.volumes_dir, f"{paths.phantom_name}-slice_indices.npy"), slice_idx_arr)
+
+    # Compute volume-level MAE from pre-allocated arrays and finalise output.
+    out: dict = {"slice_indices": slice_idx_arr}
     for p in pipelines:
-        stacked = _stack_per_pipeline(per_pipeline_slices[p], p)
-        stacked["slice_indices"] = np.asarray(slice_indices, dtype=int)
-        out[p] = stacked
+        n_tot = vol[p]["mae_n_voxels_total"]
+        m_tot = vol[p]["mae_total"]
+        valid = np.isfinite(m_tot) & (n_tot > 0)
+        vol[p]["mae_total_volume"] = (
+            float(np.sum(m_tot[valid] * n_tot[valid]) / n_tot[valid].sum())
+            if valid.any() else float("nan")
+        )
+        vol[p]["mae_per_tissue_volume"] = {}
+        for name in preloaded.tissue_names:
+            m = vol[p]["mae_per_tissue"][name]
+            n = vol[p]["mae_n_voxels_per_tissue"][name]
+            v = np.isfinite(m) & (n > 0)
+            vol[p]["mae_per_tissue_volume"][name] = (
+                float(np.sum(m[v] * n[v]) / n[v].sum()) if v.any() else float("nan")
+            )
+        vol[p].pop("_metadata_captured", None)
+        vol[p]["slice_indices"] = slice_idx_arr
+        out[p] = vol[p]
 
     _t_volume_total = time.perf_counter() - _t_volume_start
     print("\n========== Volume timing summary ==========", flush=True)

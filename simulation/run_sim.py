@@ -44,15 +44,12 @@ PIPELINES = ("adc_sse", "t2_sse", "adc_multishot", "t2_multishot", "adc_triple",
 
 
 # Default TE list shared by the T2 SSE and T2 multishot pipelines.
-DEFAULT_T2_TES = (
-    65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 123, 125, 128, 130,
-    133, 135, 138, 140, 143, 145, 148, 150, 153, 158, 163, 168, 173, 178, 181,
-    183, 186, 188, 191, 193, 196, 198, 201, 203, 206, 208, 211, 216, 221, 226,
-    231, 236, 241, 246, 251, 256, 261, 266,
-)
+DEFAULT_T2_TES = (65,  70,  75,  80,  85,  90,  95, 100, 105, 110, 115, 120, 123,
+       128, 133, 138, 143, 148, 153, 158, 163, 168, 173, 178, 181, 186,
+       191, 196, 201, 206, 211, 216, 221, 226, 231, 236)
 
 # Default TE1 list for the triple SE T2 pipeline (each TR yields 3 echoes).
-DEFAULT_T2_TRIPLE_TE1 = tuple(range(65, 155, 5))
+DEFAULT_T2_TRIPLE_TE1 = tuple(range(65, 125, 5))
 DEFAULT_ADC_BVALUES = tuple(range(0, 2001, 100))
 
 

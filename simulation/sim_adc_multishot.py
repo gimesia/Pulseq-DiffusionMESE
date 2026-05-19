@@ -78,7 +78,7 @@ def run_adc_multishot(
 
     for te in TE_values:
         for b_value in b_values:
-            print(f"[ADC-MS] TE={te} ms  b={b_value}")
+            print(f"[ADC-MS] TE={te} ms  b={b_value}", flush=True, end="\r")
             name = f"DiffSEMultishot-b{int(b_value)}-te{int(te)}"
             seq = DiffusionSEMultishotPulseqSeq(
                 name=name,

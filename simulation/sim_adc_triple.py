@@ -73,7 +73,7 @@ def run_adc_triple(
     last_seq = None
 
     for b_value in b_values:
-        print(f"[ADC-3SE] b={b_value} s/mm²")
+        print(f"[ADC-3SE] b={b_value} s/mm²", flush=True, end="\r")
         name = f"DiffTripleSE-b{int(b_value)}"
         seq = EPIDiffusionTripleSEPulseqSeq(
             name=name,

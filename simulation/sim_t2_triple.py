@@ -69,7 +69,7 @@ def run_t2_triple(
     all_echo_tes: list[float] = []
 
     for te1 in TE1_values:
-        print(f"[T2-3SE] TE1={te1} ms")
+        print(f"[T2-3SE] TE1={te1} ms", flush=True, end="\r")
         name = f"DiffTripleSE-TE1-{int(te1)}"
         seq = EPIDiffusionTripleSEPulseqSeq(
             name=name,
