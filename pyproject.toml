@@ -31,6 +31,38 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
 
+[tool.coverage.run]
+source = ["simulation"]
+omit = [
+    "simulation/qMRI_adc.py",
+    "simulation/qMRI_adc_diff_multishot_se.py",
+    "simulation/qMRI_adc_triple_se.py",
+    "simulation/qMRI_t2relax.py",
+    "simulation/qMRI_t2relax_diff_multishot_se.py",
+    "simulation/qMRI_t2relax_multishot_se.py",
+    "simulation/qMRI_t2relax_triple_se.py",
+    "simulation/simulateMESE.py",
+    "simulation/simulateSE.py",
+    "simulation/qmri_sim_run.py",
+    "simulation/qmri_sim_run_volume.py",
+    "simulation/qmri_sim_adc_multishot.py",
+    "simulation/qmri_sim_adc_sse.py",
+    "simulation/qmri_sim_adc_triple.py",
+    "simulation/qmri_sim_t2_multishot.py",
+    "simulation/qmri_sim_t2_sse.py",
+    "simulation/qmri_sim_t2_triple.py",
+    "simulation/qmri_sim_lib.py",
+    "simulation/phantom_loader.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
 [tool.ruff]
 line-length = 88
 src = ["src"]
