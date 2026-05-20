@@ -2,10 +2,18 @@
 diffusion_utils.py
 ==================
 
-IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
-December 2024–November 2028, Grant Agreement No. 101169519).
+Voxel-wise ADC and diffusion-tensor fitting for diffusion-weighted MRI.
 
-Voxel-wise ADC fitting for diffusion-weighted MRI. Mirrors the structure of
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+
+Mirrors the structure of
 ``relaxometry_utils.create_t2_map``: a single public entry point with a
 ``method`` switch that dispatches to either non-linear least squares or a
 closed-form log-linear fit.

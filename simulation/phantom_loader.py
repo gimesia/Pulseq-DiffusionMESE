@@ -5,14 +5,37 @@ Load a MRzeroCore NIfTI phantom (>= 0.4.3), match it exactly to a given
 sequence FOV and resolution so simulation and acquisition share the same
 spatial grid.
 
+Pipeline
+--------
+1. Load tissue-wise dictionary from the JSON descriptor and drop fat/vessels.
+2. Combine tissues into a single VoxelGridPhantom; piggy-back the per-tissue
+   PDs into ``tissue_masks`` so they ride through every spatial transform on
+   the same grid as the parameter maps.
+3. Sanitize NaN/Inf in all maps (combine() introduces 0/0 NaNs).
+4. Zero-pad to square in-plane (BrainWeb native is 362x434x362).
+5. Crop or zero-pad in-plane to the exact sequence FOV.
+6. Snap z-FOV to an integer multiple of the in-plane resolution so the
+   interpolated voxel is isotropic, then interpolate the whole volume.
+7. Slice the requested z index, build SimData, and final-NaN-scrub the
+   scalar fields read by the MRzero/Rust prepass.
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+
 Usage
 -----
     from phantom_loader import load_phantom
 
-    phantom, phantom_data = load_phantom(
+    phantom, phantom_data, tissue_masks = load_phantom(
         json_path      = "phantoms/brainweb-subj04/brainweb-subj04-3T.json",
         fov_mm         = 224.0,   # must match seq definition FOV
-        resolution_mm  = 224/96,  # = 2.333... mm  →  96×96 matrix
+        resolution_mm  = 224/96,  # = 2.333... mm  →  96x96 matrix
         slice_idx      = None,    # None → middle slice
     )
 """
@@ -286,7 +309,7 @@ def slice_preloaded_phantom(
         slice_idx = nz // 2
 
     phantom_slice = deepcopy(phantom).slices([slice_idx])
-    print(f"[slice]       {slice_idx}/{nz}")
+    print(f"[slice]       {slice_idx+1}/{nz}")
 
     stacked = torch.stack(
         [phantom_slice.tissue_masks[n].squeeze(-1).float() for n in tissue_names], dim=0
@@ -338,7 +361,31 @@ def load_phantom(
     resolution_mm: float = 224.0 / 96,
     slice_idx: int | None = None,
 ) -> tuple[mr0.VoxelGridPhantom, object, dict[str, torch.Tensor]]:
+    """Load a phantom, match it to the sequence grid, and extract one slice.
 
+    Parameters
+    ----------
+    json_path
+        Path to the MRzeroCore tissue-dictionary JSON descriptor.
+    fov_mm
+        In-plane field of view in millimetres. Must match the sequence
+        ``FOV`` definition so simulation and reconstruction share a grid.
+    resolution_mm
+        Isotropic in-plane voxel size in millimetres.
+    slice_idx
+        z index to extract. ``None`` → centre slice.
+
+    Returns
+    -------
+    phantom
+        The sliced ``mr0.VoxelGridPhantom`` (still carries parameter maps).
+    phantom_data
+        ``SimData`` built from ``phantom`` — the object MRzero simulates on.
+    tissue_masks
+        ``{tissue_name: (Ny, Nx) torch.bool}`` mutually-exclusive masks
+        derived by argmax over the per-tissue PDs (which ride through every
+        spatial transform on the same grid as the parameter maps).
+    """
     if not os.path.isfile(json_path):
         raise FileNotFoundError(f"Phantom JSON not found: {json_path}")
 
@@ -392,7 +439,7 @@ def load_phantom(
     if slice_idx is None:
         slice_idx = nz // 2
     phantom = phantom.slices([slice_idx])
-    print(f"[slice]       {slice_idx}/{nz}")
+    print(f"[slice]       {slice_idx+1}/{nz}")
 
     # 8. Extract per-tissue masks from tissue_masks — perfectly aligned
     #    since they went through the same transforms as phantom.PD.

@@ -1,4 +1,27 @@
-"""Multishot SE ADC pipeline (refactor of qMRI_adc_diff_multishot_se.py)."""
+"""Multishot SE (Cartesian FSE/RARE) diffusion / ADC simulation pipeline.
+
+Pipeline
+--------
+For each TE in ``TE_values`` and each b-value in ``b_values`` and each
+gradient direction:
+
+1. Build a ``DiffusionSEMultishotPulseqSeq`` (Cartesian k-space, ETL
+   echoes per TR, monopolar PGSE diffusion prep on the first RF180).
+2. Bloch-simulate; reshape the signal into (Ny, Nx) per direction.
+3. Standard inverse FFT (no NUFFT — Cartesian Nyquist sampling).
+4. Average across TEs (the T2 weighting cancels in the S(b)/S(0) ratio)
+   and across directions, then fit ADC with NLLS.
+5. Optional DTI fit on a single TE (log-linear tensor regression).
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+"""
 from __future__ import annotations
 
 import os
@@ -36,10 +59,11 @@ def run_adc_multishot(
     b_directions: int = 6,
     small_delta: Optional[float] = None,
     big_DELTA: Optional[float] = None,
-    system_type=None,
+    system_type: Optional[object] = None,
     use_gpu: Optional[bool] = None,
     save_slice_npy: bool = True,
     phantom_slice: Optional[tuple] = None,
+    dti_maps: bool = False,
 ) -> dict:
     """Run the multishot SE diffusion / ADC simulation.
 
@@ -72,13 +96,28 @@ def run_adc_multishot(
     else:
         phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
+    # Empty slice: return zero-filled maps for the volume runner.
+    if not any(bool(mask.any()) for mask in tissue_masks.values()):
+        zeros_2d = np.zeros((Ny, Nx), dtype=np.float64)
+        return {
+            "adc_nlls": zeros_2d.copy(), "adc_loglinear": zeros_2d.copy(),
+            "fa_map": zeros_2d.copy(), "md_map": zeros_2d.copy(),
+            "b_values": b_values, "reference_map": zeros_2d.copy(),
+            "tissue_masks": tissue_masks,
+            "mae_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_total": np.nan,
+            "mae_n_voxels_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_n_voxels_total": 0,
+            "weighted_images": {},
+        }
+
     images_per_te = {te: [] for te in TE_values}
     n_dirs: Optional[int] = None
     last_seq = None
 
     for te in TE_values:
         for b_value in b_values:
-            print(f"[ADC-MS] TE={te} ms  b={b_value}", flush=True, end="\r")
+            print(f"[ADC-MS]  b={b_value} s/mm²  TE={te} ms", flush=True, end="\r")
             name = f"DiffSEMultishot-b{int(b_value)}-te{int(te)}"
             seq = DiffusionSEMultishotPulseqSeq(
                 name=name,
@@ -117,7 +156,8 @@ def run_adc_multishot(
             )
             assert signal.shape[0] == n_dirs * Ny * Nx
 
-            dir_images = []
+            # Cartesian k-space → magnitude image per diffusion direction.
+            per_direction_images = []
             for d in range(n_dirs):
                 kspace = (
                     signal[d * Ny * Nx : (d + 1) * Ny * Nx]
@@ -125,16 +165,8 @@ def run_adc_multishot(
                     .reshape(Ny, Nx)
                 )
                 img_mag, _ = fft_reconstruct_image(kspace, use_gpu=use_gpu)
-                img_mag = img_mag.squeeze()
-                dir_images.append(img_mag)
-
-                echo_name = (
-                    f"DiffMultiShotSE-b{int(b_value)}-dir{d}-TE{int(te)}.nii.gz"
-                )
-                save_magnitude_nifti(
-                    img_mag, os.path.join(paths.diff_img_dir, echo_name), res
-                )
-            images_per_te[te].append(np.stack(dir_images, axis=0))
+                per_direction_images.append(img_mag.squeeze())
+            images_per_te[te].append(np.stack(per_direction_images, axis=0))
 
     # (n_te, n_b, n_dirs, Ny, Nx)
     stacked = np.stack(
@@ -143,24 +175,30 @@ def run_adc_multishot(
     mag_images_adc = np.abs(stacked.mean(axis=0))  # (n_b, n_dirs, Ny, Nx)
     mag_images_dti = np.abs(stacked[TE_values.index(TE_for_DTI)])
 
+    weighted_images = {
+        f"ADCw_b{int(b)}_dir{d}": mag_images_adc[b_i, d]
+        for b_i, b in enumerate(b_values)
+        for d in range(mag_images_adc.shape[1])
+    }
+
     trace_dwi = compute_trace_dwi(mag_images_adc)
     adc_nlls, _ = create_adc_map(trace_dwi, b_values, method="nlls")
-    adc_ll, _ = create_adc_map(trace_dwi, b_values, method="loglinear")
-    fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
-        mag_images_dti, b_values, last_seq.b_directions
-    )
+    # adc_ll, _ = create_adc_map(trace_dwi, b_values, method="loglinear")
+    if dti_maps:
+        fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
+            mag_images_dti, b_values, last_seq.b_directions
+        )
 
-    adc_nlls_oriented = np.fliplr(adc_nlls) * 1e3
-    adc_ref_oriented = np.fliplr(adc_ll) * 1e3  # placeholder, kept for parity
+    adc_nlls_oriented = adc_nlls * 1e3
+    # adc_ref_oriented = adc_ll * 1e3
     if save_slice_npy:
-        np.save(
-            os.path.join(paths.volumes_dir, f"{paths.phantom_name}-ADC_multishot_se.npy"),
+        save_magnitude_nifti(
             adc_nlls_oriented,
+            os.path.join(paths.volumes_dir, f"{paths.phantom_name}-ADC_multishot_se.nii.gz"),
+            res,
         )
     save_tissue_masks(tissue_masks, paths.masks_dir, paths.phantom_name)
-    print(
-        f"[ADC-MS] saved ADC map to {paths.volumes_dir}"
-    )
+    # print(f"[ADC-MS] saved ADC map to {paths.volumes_dir}")
 
     ref_D = phantom_map_to_2d(phantom.D)
     est_adc = adc_nlls * 1e3
@@ -168,14 +206,14 @@ def run_adc_multishot(
 
     return {
         "adc_nlls": adc_nlls_oriented,
-        "adc_loglinear": adc_ll,
-        "fa_map": fa_map,
-        "md_map": md_map,
+        # "adc_loglinear": adc_ll,
+        "fa_map": fa_map if dti_maps else None,
+        "md_map": md_map if dti_maps else None,
         "b_values": b_values,
-        "reference_map": adc_ref_oriented,
         "tissue_masks": tissue_masks,
         "mae_per_tissue": mae["per_tissue"],
         "mae_total": mae["total"],
         "mae_n_voxels_per_tissue": mae["n_voxels_per_tissue"],
         "mae_n_voxels_total": mae["n_voxels_total"],
+        "weighted_images": weighted_images,
     }

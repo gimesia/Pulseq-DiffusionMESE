@@ -1,4 +1,34 @@
-"""Triple SE EPI T2 relaxometry pipeline (refactor of qMRI_t2relax_triple_se.py)."""
+"""Triple spin-echo EPI T2-relaxometry simulation pipeline.
+
+Each TR produces three echoes (TE1, auto-computed TE2, TE3) from one RF90 +
+three RF180s. Scanning ``TE1_values`` therefore samples the T2 decay curve
+at 3 * len(TE1_values) effective echo times — for the default ~15 TE1 values
+that means ~45 (TE, image) datapoints for a T2 fit per voxel.
+
+Pipeline
+--------
+For each TE1 in ``TE1_values``:
+
+1. Build an ``EPIDiffusionTripleSEPulseqSeq`` at b=0 with the requested TE1.
+2. Bloch-simulate; split the signal into three per-echo k-spaces (echo 1
+   with partial Fourier, echoes 2/3 full).
+3. NUFFT-reconstruct each echo with its own k-space trajectory.
+4. Append the three (image, TE) pairs to the global list.
+
+After all TE1 values are collected, the (image, TE) pairs are sorted by TE
+and ``S(TE) = S0 * exp(-TE/T2)`` is fit per voxel with NLLS. Stems for the
+saved T2-weighted NIfTI files are disambiguated when TE2/TE3 round to the
+same millisecond across different TE1 choices.
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+"""
 from __future__ import annotations
 
 import os
@@ -31,7 +61,7 @@ def run_t2_triple(
     blip_down: bool = True,
     small_delta: float = 0.018,
     big_DELTA: float = 0.03,
-    system_type=None,
+    system_type: Optional[object] = None,
     use_gpu: Optional[bool] = None,
     save_slice_npy: bool = True,
     phantom_slice: Optional[tuple] = None,
@@ -65,11 +95,25 @@ def run_t2_triple(
     else:
         phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
+    # Empty slice: return zero-filled maps for the volume runner.
+    if not any(bool(mask.any()) for mask in tissue_masks.values()):
+        zeros_2d = np.zeros((Ny, Nx), dtype=np.float64)
+        return {
+            "t2_nlls": zeros_2d.copy(), "t2_loglinear": zeros_2d.copy(),
+            "TEs": TE1_values, "reference_map": zeros_2d.copy(),
+            "tissue_masks": tissue_masks,
+            "mae_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_total": 0,
+            "mae_n_voxels_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_n_voxels_total": 0,
+            "weighted_images": {},
+        }
+
     all_echo_images: list[np.ndarray] = []
     all_echo_tes: list[float] = []
 
     for te1 in TE1_values:
-        print(f"[T2-3SE] TE1={te1} ms", flush=True, end="\r")
+        print(f"[T2-3SE]  b={b_value} s/mm²  TE1={te1} ms", flush=True, end="\r")
         name = f"DiffTripleSE-TE1-{int(te1)}"
         seq = EPIDiffusionTripleSEPulseqSeq(
             name=name,
@@ -79,7 +123,7 @@ def run_t2_triple(
             fov=fov,
             slice_thickness=slice_thickness,
             TE=int(te1),
-            TR=TR,
+            TR=TR, 
             b_value=b_value,
             b_directions=1,
             b_0_frequency=0,
@@ -96,9 +140,10 @@ def run_t2_triple(
             blip_down=blip_down,
             logger=logger,
             fit_epi=True,
+            alternating_blip_polarity=True,
         )
         seq.write()
-
+        
         te1_ms = seq.TE * 1e3
         te2_ms = seq.TE2 * 1e3
         te3_ms = seq.TE3 * 1e3
@@ -143,42 +188,50 @@ def run_t2_triple(
             samples_per_cal + samples_epi1 + samples_epi2 : samples_per_cal + samples_per_dir
         ]
 
+        # NUFFT-reconstruct each of the three echoes with its own trajectory.
         echo_imgs = []
-        for ksp, traj_echo in (
+        for kspace_line, traj_echo in (
             (echo1_ksp, traj_epi1),
             (echo2_ksp, traj_epi2),
             (echo3_ksp, traj_epi3),
         ):
-            op = get_operator(
+            nufft_op = get_operator(
                 backend_name="cufinufft" if use_gpu else "finufft",
                 samples=traj_echo,
                 shape=(Ny, Nx),
                 n_coils=1,
                 density=True,
             )
-            sig_t = ksp.to(torch.complex64)
-            echo_imgs.append(op.adj_op(sig_t.flatten()).squeeze().cpu().numpy().T)
+            kspace_tensor = kspace_line.to(torch.complex64)
+            echo_imgs.append(nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy().T)
 
         for img, te_ms in zip(echo_imgs, (te1_ms, te2_ms, te3_ms)):
             mag_img = np.abs(img)
             all_echo_images.append(mag_img)
             all_echo_tes.append(te_ms)
-            nii = f"DiffTripleSE-TE{int(te_ms)}-{blip_tag}.nii.gz"
-            save_magnitude_nifti(mag_img, os.path.join(paths.t2_img_dir, nii), res)
 
     order = np.argsort(all_echo_tes)
     images_stack = np.array(all_echo_images)[order]
     te_sorted = np.array(all_echo_tes)[order]
 
-    t2_nlls, _ = create_t2_map(images_stack, te_sorted, method="nlls")
-    t2_ll, _ = create_t2_map(images_stack, te_sorted, method="loglinear")
+    # Stems may collide when TE2/TE3 (auto-computed) round to the same ms
+    # across different TE1 values — disambiguate with a sequential suffix.
+    weighted_images: dict[str, np.ndarray] = {}
+    _seen: dict[str, int] = {}
+    for i, te_ms in enumerate(te_sorted):
+        base = f"T2w_TE{int(round(te_ms))}_{blip_tag}"
+        n = _seen.get(base, 0)
+        stem = base if n == 0 else f"{base}_e{n}"
+        _seen[base] = n + 1
+        weighted_images[stem] = images_stack[i]
 
+    t2_nlls, _ = create_t2_map(images_stack, te_sorted, method="nlls")
     t2_nlls_oriented = t2_nlls / 1000.0
     if save_slice_npy:
         out_path = os.path.join(
-            paths.volumes_dir, f"{paths.phantom_name}-T2_MSE_{blip_tag}.npy"
+            paths.volumes_dir, f"{paths.phantom_name}-T2_MSE_{blip_tag}.nii.gz"
         )
-        np.save(out_path, t2_nlls_oriented)
+        save_magnitude_nifti(np.rot90(np.flipud(t2_nlls_oriented), 1), out_path, res)
         print(f"[T2-3SE] saved {out_path}")
 
     ref_T2 = phantom_map_to_2d(phantom.T2)
@@ -187,7 +240,6 @@ def run_t2_triple(
 
     return {
         "t2_nlls": t2_nlls_oriented,
-        "t2_loglinear": t2_ll,
         "TEs": te_sorted,
         "reference_map": ref_T2,
         "tissue_masks": tissue_masks,
@@ -195,4 +247,5 @@ def run_t2_triple(
         "mae_total": mae["total"],
         "mae_n_voxels_per_tissue": mae["n_voxels_per_tissue"],
         "mae_n_voxels_total": mae["n_voxels_total"],
+        "weighted_images": weighted_images,
     }

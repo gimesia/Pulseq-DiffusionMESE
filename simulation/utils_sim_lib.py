@@ -1,12 +1,29 @@
 """Shared helpers for the qMRI simulation pipelines.
 
 Provides:
-    - PathConfig: dataclass holding all directory paths and the pulseq lib path
-    - resolve_phantom_path / load_phantom_for_sim: phantom loading wrapper
-    - simulate_signal: MR0 graph build + execute on GPU when available
-    - save_magnitude_nifti: write a 2-D magnitude image as NIfTI
-    - compute_trace_dwi: data-floored geometric mean across diffusion directions
-    - ensure_seq_path_on_syspath: inject the pulseq_diffusion_mese directory
+    - ``PathConfig`` — dataclass holding all directory paths and the pulseq
+      library path.
+    - ``load_phantom_for_sim`` / ``preload_phantom_for_sim`` /
+      ``extract_phantom_slice`` — phantom-loading wrappers around
+      :mod:`phantom_loader`.
+    - ``simulate_signal`` — MR0 graph build + execute, picking GPU when
+      ``torch.cuda.is_available()``.
+    - ``save_magnitude_nifti`` — write a 2-D magnitude image as a single-slice
+      NIfTI volume.
+    - ``compute_trace_dwi`` — data-floored geometric mean across diffusion
+      directions (trace-DWI for ADC fitting).
+    - ``compute_mae_per_tissue`` — per-tissue and combined MAE for validation.
+    - ``ensure_seq_path_on_syspath`` — inject the ``pulseq_diffusion_mese``
+      directory into ``sys.path`` so the sequence classes import cleanly.
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
 """
 from __future__ import annotations
 
@@ -57,6 +74,10 @@ class PathConfig:
         Output directories for .seq files, .npy maps and tissue masks.
     diff_img_dir, t2_img_dir:
         Output directories for per-echo magnitude NIfTI images.
+    t2_vol_dir, adc_vol_dir:
+        Output directories for 3D (Ny, Nx, n_slices) weighted-image
+        volumes — one NIfTI per echo / b-value / direction / blip variant,
+        used as FSL topup input.
     """
 
     seq_lib_path: str
@@ -67,27 +88,38 @@ class PathConfig:
     masks_dir: str
     diff_img_dir: str
     t2_img_dir: str
+    t2_vol_dir: str = ""
+    adc_vol_dir: str = ""
 
     def ensure_dirs(self) -> None:
-        for d in (
+        """Create every output directory listed on this config (idempotent)."""
+        for output_dir in (
             self.sequences_dir,
             self.volumes_dir,
             self.masks_dir,
             self.diff_img_dir,
             self.t2_img_dir,
+            self.t2_vol_dir,
+            self.adc_vol_dir,
         ):
-            os.makedirs(d, exist_ok=True)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
 
 
 # ----------------------------------------------------------------------------
 #  sys.path / logging setup
 # ----------------------------------------------------------------------------
 def ensure_seq_path_on_syspath(seq_lib_path: str) -> None:
+    """Append the ``pulseq_diffusion_mese`` library path to :mod:`sys.path`.
+
+    Idempotent — repeat calls with the same path are no-ops.
+    """
     if seq_lib_path and seq_lib_path not in sys.path:
         sys.path.append(seq_lib_path)
 
 
 def make_quiet_logger() -> logging.Logger:
+    """Silence all logging globally so progress bars are not interrupted."""
     logging.disable(logging.CRITICAL)
     logger = logging.getLogger()
     logger.setLevel(logging.FATAL)
@@ -98,6 +130,7 @@ def make_quiet_logger() -> logging.Logger:
 #  Phantom loading
 # ----------------------------------------------------------------------------
 def resolve_phantom_json(paths: PathConfig) -> str:
+    """Build the absolute path to the phantom JSON descriptor."""
     return os.path.join(
         paths.phantoms_dir, paths.phantom_name, f"{paths.phantom_name}-3T.json"
     )
@@ -240,6 +273,7 @@ def simulate_signal(
 #  NIfTI helpers
 # ----------------------------------------------------------------------------
 def affine_from_res(res: float) -> np.ndarray:
+    """Diagonal NIfTI affine for an isotropic voxel of size ``res`` mm."""
     return np.array([[res, 0, 0, 0], [0, res, 0, 0], [0, 0, res, 0], [0, 0, 0, 1]])
 
 
@@ -253,29 +287,34 @@ def save_magnitude_nifti(mag_img: np.ndarray, path: str, res: float) -> None:
 # ----------------------------------------------------------------------------
 #  Diffusion post-processing
 # ----------------------------------------------------------------------------
-def compute_trace_dwi(mag: np.ndarray) -> np.ndarray:
-    """Geometric mean across diffusion directions.
+def compute_trace_dwi(mag_images: np.ndarray) -> np.ndarray:
+    """Geometric mean across diffusion directions (trace-DWI estimator).
 
-    ``mag`` is shaped ``(n_b, n_dirs, Ny, Nx)``. The floor is data-scaled so
-    that a single noise-floor voxel in one direction at high b does not drag
-    the geometric mean to ~0 and produce a spurious fast-decay.
+    ``mag_images`` is shaped ``(n_b, n_dirs, Ny, Nx)``. The floor is
+    data-scaled so that a single noise-floor voxel in one direction at high
+    b does not drag the geometric mean to ~0 and produce a spurious
+    fast-decay.
     """
-    eps_local = 1e-3 * float(mag[0].max())
-    return np.exp(np.mean(np.log(np.maximum(mag, eps_local)), axis=1))
+    noise_floor = 1e-3 * float(mag_images[0].max())
+    return np.exp(np.mean(np.log(np.maximum(mag_images, noise_floor)), axis=1))
 
 
-def save_tissue_masks(tissue_masks, masks_dir: str, phantom_name: str) -> None:
+def save_tissue_masks(
+    tissue_masks: dict,
+    masks_dir: str,
+    phantom_name: str,
+) -> None:
     """Stack the tissue-mask dict into ``(n_tissues, Ny, Nx)`` and save as .npy."""
-    masks = torch.stack(list(tissue_masks.values()), dim=0).numpy()
+    stacked_masks = torch.stack(list(tissue_masks.values()), dim=0).numpy()
     os.makedirs(masks_dir, exist_ok=True)
-    np.save(os.path.join(masks_dir, f"{phantom_name}-tissue_masks.npy"), masks)
+    np.save(os.path.join(masks_dir, f"{phantom_name}-tissue_masks.npy"), stacked_masks)
 
 
 # ----------------------------------------------------------------------------
 #  Per-tissue MAE
 # ----------------------------------------------------------------------------
-def _mask_to_2d_bool(mask) -> np.ndarray:
-    """Coerce a tissue-mask tensor to a 2-D boolean numpy array."""
+def _mask_to_2d_bool(mask: object) -> np.ndarray:
+    """Coerce a tissue-mask tensor (torch or ndarray) to a 2-D boolean array."""
     if hasattr(mask, "cpu"):
         mask = mask.cpu().numpy()
     return np.squeeze(np.asarray(mask)).astype(bool)
@@ -285,11 +324,11 @@ def combined_tissue_mask(tissue_masks: dict) -> np.ndarray:
     """Union of all tissue masks → the 'combined' phantom region."""
     if "combined" in tissue_masks:
         return _mask_to_2d_bool(tissue_masks["combined"])
-    out = None
-    for m in tissue_masks.values():
-        m2 = _mask_to_2d_bool(m)
-        out = m2 if out is None else (out | m2)
-    return out if out is not None else np.zeros((0, 0), dtype=bool)
+    union: np.ndarray | None = None
+    for mask in tissue_masks.values():
+        mask_2d = _mask_to_2d_bool(mask)
+        union = mask_2d if union is None else (union | mask_2d)
+    return union if union is not None else np.zeros((0, 0), dtype=bool)
 
 
 def compute_mae_per_tissue(
@@ -322,43 +361,43 @@ def compute_mae_per_tissue(
             f"Estimated {est.shape} and reference {ref.shape} shapes differ."
         )
 
-    def _mae_in(mask: np.ndarray):
+    def _mae_in(mask: np.ndarray) -> tuple[float, int]:
         if mask.shape != est.shape:
             raise ValueError(
                 f"Mask shape {mask.shape} does not match map shape {est.shape}."
             )
-        valid = mask
+        valid_voxels = mask
         if exclude_zeros:
-            valid = valid & (est != 0) & (ref != 0)
-        n = int(valid.sum())
-        if n == 0:
+            valid_voxels = valid_voxels & (est != 0) & (ref != 0)
+        n_valid = int(valid_voxels.sum())
+        if n_valid == 0:
             return float("nan"), 0
-        return float(np.mean(np.abs(est[valid] - ref[valid]))), n
+        return float(np.mean(np.abs(est[valid_voxels] - ref[valid_voxels]))), n_valid
 
-    per_tissue: dict[str, float] = {}
-    n_per_tissue: dict[str, int] = {}
-    for name, mask in tissue_masks.items():
-        m = _mask_to_2d_bool(mask)
-        v, n = _mae_in(m)
-        per_tissue[name] = v
-        n_per_tissue[name] = n
+    mae_per_tissue: dict[str, float] = {}
+    n_voxels_per_tissue: dict[str, int] = {}
+    for tissue_name, mask in tissue_masks.items():
+        mask_2d = _mask_to_2d_bool(mask)
+        mae_value, n_voxels = _mae_in(mask_2d)
+        mae_per_tissue[tissue_name] = mae_value
+        n_voxels_per_tissue[tissue_name] = n_voxels
 
-    combined = combined_tissue_mask(tissue_masks)
-    total, n_total = _mae_in(combined)
+    combined_mask = combined_tissue_mask(tissue_masks)
+    mae_total, n_voxels_total = _mae_in(combined_mask)
 
     return {
-        "per_tissue": per_tissue,
-        "total": total,
-        "n_voxels_per_tissue": n_per_tissue,
-        "n_voxels_total": n_total,
+        "per_tissue": mae_per_tissue,
+        "total": mae_total,
+        "n_voxels_per_tissue": n_voxels_per_tissue,
+        "n_voxels_total": n_voxels_total,
     }
 
 
-def phantom_map_to_2d(t) -> np.ndarray:
+def phantom_map_to_2d(parameter_map: object) -> np.ndarray:
     """Squeeze a phantom map (torch tensor or ndarray) to a 2-D numpy array."""
-    if hasattr(t, "cpu"):
-        t = t.cpu().numpy()
-    return np.squeeze(np.asarray(t))
+    if hasattr(parameter_map, "cpu"):
+        parameter_map = parameter_map.cpu().numpy()
+    return np.squeeze(np.asarray(parameter_map))
 
 
 # ----------------------------------------------------------------------------

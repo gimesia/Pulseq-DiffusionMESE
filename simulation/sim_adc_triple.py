@@ -1,4 +1,37 @@
-"""Triple SE EPI ADC pipeline (refactor of qMRI_adc_triple_se.py)."""
+"""Triple spin-echo EPI diffusion / ADC simulation pipeline.
+
+This is the headline pipeline of the ESMRMB 2026 deliverable: a single TR
+produces three echoes (TE1, auto-computed TE2, TE3) from one RF90 +
+three RF180s. PGSE diffusion encoding is applied once around the first
+RF180, so all three echoes carry the same diffusion weighting but with
+progressively stronger T2 attenuation.
+
+Pipeline
+--------
+For each b-value in ``b_values`` and each gradient direction:
+
+1. Build an ``EPIDiffusionTripleSEPulseqSeq`` at the requested TE1.
+   ``alternating_blip_polarity=True`` flips the EPI blip direction
+   between echoes for B0 field-mapping; ``phase_cycling=True`` minimises
+   stimulated-echo contamination.
+2. Bloch-simulate; split the k-space stream into three per-echo k-spaces
+   (echo 1 with partial Fourier, echoes 2/3 full).
+3. Pull the trajectory, split it into three echo trajectories, and run
+   NUFFT once per (echo, direction).
+4. Trace-DWI is computed from echo 1 only (the shortest-TE echo has the
+   highest SNR); ADC is fit with NLLS.
+
+Saved NIfTI: one per (b-value, direction, echo) + final ADC map.
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+"""
 from __future__ import annotations
 
 import warnings
@@ -35,10 +68,11 @@ def run_adc_triple(
     blip_down: bool = True,
     small_delta: Optional[float] = None,
     big_DELTA: Optional[float] = None,
-    system_type=None,
+    system_type: Optional[object] = None,
     use_gpu: Optional[bool] = None,
     save_slice_npy: bool = True,
     phantom_slice: Optional[tuple] = None,
+    dti_maps: bool = False,
 ) -> dict:
     """Run the triple SE EPI diffusion / ADC simulation.
 
@@ -68,12 +102,27 @@ def run_adc_triple(
     else:
         phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
+    # Empty slice: return zero-filled maps for the volume runner.
+    if not any(bool(mask.any()) for mask in tissue_masks.values()):
+        zeros_2d = np.zeros((Ny, Nx), dtype=np.float64)
+        return {
+            "adc_nlls": zeros_2d.copy(), "adc_loglinear": zeros_2d.copy(),
+            "fa_map": zeros_2d.copy(), "md_map": zeros_2d.copy(),
+            "b_values": b_values, "reference_map": zeros_2d.copy(),
+            "tissue_masks": tissue_masks,
+            "mae_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_total": 0,
+            "mae_n_voxels_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_n_voxels_total": 0,
+            "weighted_images": {},
+        }
+
     all_echo_images = []
     te1_ms = te2_ms = te3_ms = None
     last_seq = None
 
     for b_value in b_values:
-        print(f"[ADC-3SE] b={b_value} s/mm²", flush=True, end="\r")
+        print(f"[ADC-3SE]  b={b_value} s/mm²  TE={TE} ms", flush=True, end="\r")
         name = f"DiffTripleSE-b{int(b_value)}"
         seq = EPIDiffusionTripleSEPulseqSeq(
             name=name,
@@ -100,6 +149,7 @@ def run_adc_triple(
             phase_cycling=True,
             partial_fourier_factor=1,
             logger=logger,
+            alternating_blip_polarity=True,
         )
         seq.write()
         last_seq = seq
@@ -156,58 +206,55 @@ def run_adc_triple(
         traj_epi2 = traj[d0 + samples_epi1 : d0 + samples_epi1 + samples_epi2]
         traj_epi3 = traj[d0 + samples_epi1 + samples_epi2 : d0 + samples_per_dir]
 
-        # One NUFFT operator per echo, reused across directions
-        img_size = (Ny, Nx)
-        _nufft_backend = "cufinufft" if use_gpu else "finufft"
-        op_e1 = get_operator(backend_name=_nufft_backend, samples=traj_epi1, shape=img_size,
-                             n_coils=1, density=True)
-        op_e2 = get_operator(backend_name=_nufft_backend, samples=traj_epi2, shape=img_size,
-                             n_coils=1, density=True)
-        op_e3 = get_operator(backend_name=_nufft_backend, samples=traj_epi3, shape=img_size,
-                             n_coils=1, density=True)
+        # One NUFFT operator per echo, reused across diffusion directions.
+        img_shape = (Ny, Nx)
+        nufft_backend = "cufinufft" if use_gpu else "finufft"
+        nufft_echo1 = get_operator(backend_name=nufft_backend, samples=traj_epi1,
+                                   shape=img_shape, n_coils=1, density=True)
+        nufft_echo2 = get_operator(backend_name=nufft_backend, samples=traj_epi2,
+                                   shape=img_shape, n_coils=1, density=True)
+        nufft_echo3 = get_operator(backend_name=nufft_backend, samples=traj_epi3,
+                                   shape=img_shape, n_coils=1, density=True)
 
-        dir_echo_images = []
+        per_direction_echo_images = []
         for d in range(n_dirs):
-            imgs = []
-            for ksp, op in (
-                (echo1_ks[d], op_e1),
-                (echo2_ks[d], op_e2),
-                (echo3_ks[d], op_e3),
+            echo_images = []
+            for kspace_line, nufft_op in (
+                (echo1_ks[d], nufft_echo1),
+                (echo2_ks[d], nufft_echo2),
+                (echo3_ks[d], nufft_echo3),
             ):
-                sig_t = torch.from_numpy(np.array(ksp)).to(torch.complex64)
-                imgs.append(op.adj_op(sig_t.flatten()).squeeze().cpu().numpy().T)
-            dir_echo_images.append(np.stack(imgs, axis=0))  # (3, Ny, Nx)
+                kspace_tensor = torch.from_numpy(np.array(kspace_line)).to(torch.complex64)
+                echo_images.append(nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy().T)
+            per_direction_echo_images.append(np.stack(echo_images, axis=0))  # (3, Ny, Nx)
 
-            for echo_idx, te_ms_echo in enumerate([te1_ms, te2_ms, te3_ms]):
-                echo_name = (
-                    f"DiffTripleSE-b{int(b_value)}-dir{d}-TE{int(te_ms_echo)}-{blip_tag}.nii.gz"
-                )
-                save_magnitude_nifti(
-                    np.abs(imgs[echo_idx]),
-                    os.path.join(paths.diff_img_dir, echo_name),
-                    res,
-                )
-
-        all_echo_images.append(np.stack(dir_echo_images, axis=0))  # (n_dirs, 3, Ny, Nx)
+        all_echo_images.append(np.stack(per_direction_echo_images, axis=0))  # (n_dirs, 3, Ny, Nx)
 
     all_echo_images = np.array(all_echo_images)  # (n_b, n_dirs, 3, Ny, Nx)
     mag_images = np.abs(all_echo_images)
     mag_echo1 = mag_images[:, :, 0, :, :]
     mag_images_combined = mag_images.mean(axis=2)
 
+    weighted_images = {
+        f"ADCw_b{int(b)}_dir{d}_TE{int(te_ms_echo)}_{blip_tag}": mag_images[b_i, d, e]
+        for b_i, b in enumerate(b_values)
+        for d in range(mag_images.shape[1])
+        for e, te_ms_echo in enumerate([te1_ms, te2_ms, te3_ms])
+    }
+
     trace_dwi = compute_trace_dwi(mag_echo1)
     adc_nlls, _ = create_adc_map(trace_dwi, b_values, method="nlls")
-    adc_ll, _ = create_adc_map(trace_dwi, b_values, method="loglinear")
-    fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
-        mag_images_combined, b_values, last_seq.b_directions
-    )
+    if dti_maps:
+        fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
+            mag_images_combined, b_values, last_seq.b_directions
+        )
 
     adc_nlls_oriented = adc_nlls * 1e3
     if save_slice_npy:
         out_path = os.path.join(
-            paths.volumes_dir, f"{paths.phantom_name}-ADC_MSE_{blip_tag}.npy"
+            paths.volumes_dir, f"{paths.phantom_name}-ADC_MSE_{blip_tag}.nii.gz"
         )
-        np.save(out_path, adc_nlls_oriented)
+        save_magnitude_nifti(np.rot90(np.flipud(adc_nlls_oriented), 1), out_path, res)
         print(f"[ADC-3SE] saved {out_path}")
 
     ref_D = phantom_map_to_2d(phantom.D)
@@ -216,9 +263,8 @@ def run_adc_triple(
 
     return {
         "adc_nlls": adc_nlls_oriented,
-        "adc_loglinear": adc_ll,
-        "fa_map": fa_map,
-        "md_map": md_map,
+        "fa_map": fa_map if dti_maps else None,
+        "md_map": md_map if dti_maps else None,
         "echo_TEs_ms": (te1_ms, te2_ms, te3_ms),
         "b_values": b_values,
         "reference_map": ref_D,
@@ -227,4 +273,5 @@ def run_adc_triple(
         "mae_total": mae["total"],
         "mae_n_voxels_per_tissue": mae["n_voxels_per_tissue"],
         "mae_n_voxels_total": mae["n_voxels_total"],
+        "weighted_images": weighted_images,
     }

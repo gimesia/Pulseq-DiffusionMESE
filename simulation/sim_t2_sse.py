@@ -1,4 +1,28 @@
-"""Single-shot EPI SE T2 relaxometry pipeline (refactor of qMRI_t2relax.py)."""
+"""Single-shot EPI spin-echo T2-relaxometry simulation pipeline.
+
+Pipeline
+--------
+For each TE in ``TEs``:
+
+1. Build an ``EPIDiffusionSEPulseqSeq`` at b=0 with the requested TE
+   (PGSE timing is kept fixed so the only acquisition difference between
+   echo times is the spin-echo refocusing position).
+2. Bloch-simulate, drop the calibration prefix, reshape the single-direction
+   k-space, and reconstruct via NUFFT (cufinufft / finufft).
+3. After all TEs have been collected, fit ``S(TE) = S0 * exp(-TE/T2)``
+   per voxel with NLLS (warm-started by a log-linear fit).
+
+One NIfTI per TE plus the final T2 NLLS map are saved.
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+"""
 from __future__ import annotations
 
 import os
@@ -36,7 +60,7 @@ def run_t2_sse(
     blip_down: bool = False,
     small_delta: float = 0.018,
     big_DELTA: float = 0.03,
-    system_type=None,
+    system_type: Optional[object] = None,
     use_gpu: Optional[bool] = None,
     save_slice_npy: bool = True,
     phantom_slice: Optional[tuple] = None,
@@ -66,9 +90,23 @@ def run_t2_sse(
     else:
         phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
+    # Empty slice: return zero-filled maps so the volume runner stacks cleanly.
+    if not any(bool(mask.any()) for mask in tissue_masks.values()):
+        zeros_2d = np.zeros((Ny, Nx), dtype=np.float64)
+        return {
+            "t2_nlls": zeros_2d.copy(), "t2_loglinear": zeros_2d.copy(),
+            "TEs": TEs, "reference_map": zeros_2d.copy(),
+            "tissue_masks": tissue_masks,
+            "mae_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_total": 0,
+            "mae_n_voxels_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_n_voxels_total": 0,
+            "weighted_images": {},
+        }
+
     reconstructed_b0 = []  # one complex image per TE
     for te in TEs:
-        print(f"[T2-SSE] TE={te} ms", flush=True, end="\r")
+        print(f"[T2-SSE]  b={b_value} s/mm²  TE={te} ms", flush=True, end="\r")
         name = f"DiffSE-TE{int(te)}-{blip_tag}"
         seq = EPIDiffusionSEPulseqSeq(
             name=name,
@@ -123,35 +161,33 @@ def run_t2_sse(
         traj = np.stack([kx_norm, ky_norm], axis=-1)[samples_per_cal:]
         traj_dir0 = traj[:samples_per_dir]
 
-        op = get_operator(
-            backend_name="cufinufft",
+        nufft_op = get_operator(
+            backend_name="cufinufft" if use_gpu else "finufft",
             samples=traj_dir0,
             shape=(Ny, Nx),
             n_coils=1,
             density=True,
         )
-        sig = torch.from_numpy(dir_signal[0]).to(torch.complex64)
-        img_complex = op.adj_op(sig.flatten()).squeeze().cpu().numpy().T
+        kspace_tensor = torch.from_numpy(dir_signal[0]).to(torch.complex64)
+        img_complex = nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy().T
         reconstructed_b0.append(img_complex)
-
-        save_magnitude_nifti(
-            np.abs(img_complex),
-            os.path.join(paths.t2_img_dir, f"{name}.nii.gz"),
-            res,
-        )
 
     reconstructed_b0 = np.array(reconstructed_b0)  # (n_TEs, Ny, Nx)
     mag_b0 = np.abs(reconstructed_b0)
 
+    weighted_images = {
+        f"T2w_TE{int(te)}_{blip_tag}": mag_b0[i]
+        for i, te in enumerate(TEs)
+    }
+
     t2_nlls, _ = create_t2_map(mag_b0, TEs, method="nlls")
-    t2_ll, _ = create_t2_map(mag_b0, TEs, method="loglinear")
 
     t2_nlls_oriented = t2_nlls / 1000.0
     if save_slice_npy:
         out_path = os.path.join(
-            paths.volumes_dir, f"{paths.phantom_name}-T2_SSE_{blip_tag}.npy"
+            paths.volumes_dir, f"{paths.phantom_name}-T2_SSE_{blip_tag}.nii.gz"
         )
-        np.save(out_path, t2_nlls_oriented)
+        save_magnitude_nifti(t2_nlls_oriented, out_path, res)
         print(f"[T2-SSE] saved {out_path}")
 
     # MAE per tissue + combined. phantom.T2 is in seconds; t2_nlls is in ms.
@@ -161,7 +197,6 @@ def run_t2_sse(
 
     return {
         "t2_nlls": t2_nlls_oriented,
-        "t2_loglinear": t2_ll,
         "TEs": TEs,
         "reference_map": ref_T2,
         "tissue_masks": tissue_masks,
@@ -169,4 +204,5 @@ def run_t2_sse(
         "mae_total": mae["total"],
         "mae_n_voxels_per_tissue": mae["n_voxels_per_tissue"],
         "mae_n_voxels_total": mae["n_voxels_total"],
+        "weighted_images": weighted_images,
     }

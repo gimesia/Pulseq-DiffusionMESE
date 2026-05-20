@@ -6,7 +6,10 @@ brainweb_phantoms/*
 
 simulation/phantoms/brainweb/*
 simulation/simulated/brainmaps/*
+simulation/simulated/masks/*
+simulation/simulated/adc_vol
 simulation/simulated/diff_img/*
+simulation/simulated/t2_vol
 simulation/simulated/t2_img/*
 simulation/simulated/seq/*
 simulation/simulated/topupADC/*

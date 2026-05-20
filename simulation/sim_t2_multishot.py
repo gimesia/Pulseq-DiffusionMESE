@@ -1,4 +1,24 @@
-"""Multishot SE T2 relaxometry pipeline (refactor of qMRI_t2relax_multishot_se.py)."""
+"""Multishot SE (Cartesian FSE) T2-relaxometry simulation pipeline.
+
+Pipeline
+--------
+For each TE in ``TEs``:
+
+1. Build a ``DiffusionSEMultishotPulseqSeq`` at b=0 with the requested TE.
+2. Bloch-simulate; reshape the (Ny, Nx) k-space and inverse-FFT to image.
+3. After all TEs, fit ``S(TE) = S0 * exp(-TE/T2)`` per voxel with NLLS.
+
+Cartesian Nyquist sampling means plain inverse FFT is sufficient — no NUFFT.
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+"""
 from __future__ import annotations
 
 import os
@@ -34,7 +54,7 @@ def run_t2_multishot(
     ),
     TR: int = 5000,
     ETL: int = 1,
-    system_type=None,
+    system_type: Optional[object] = None,
     use_gpu: Optional[bool] = None,
     save_slice_npy: bool = True,
     phantom_slice: Optional[tuple] = None,
@@ -63,9 +83,23 @@ def run_t2_multishot(
     else:
         phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
 
+    # Empty slice: return zero-filled maps for the volume runner.
+    if not any(bool(mask.any()) for mask in tissue_masks.values()):
+        zeros_2d = np.zeros((Ny, Nx), dtype=np.float64)
+        return {
+            "t2_nlls": zeros_2d.copy(), "t2_loglinear": zeros_2d.copy(),
+            "TEs": TEs, "reference_map": zeros_2d.copy(),
+            "tissue_masks": tissue_masks,
+            "mae_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_total": 0,
+            "mae_n_voxels_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_n_voxels_total": 0,
+            "weighted_images": {},
+        }
+
     reconstructed_images = []
     for te in TEs:
-        print(f"[T2-MS] TE={te} ms", flush=True, end="\r")
+        print(f"[T2-MS]  b=0 s/mm²  TE={te} ms", flush=True, end="\r")
         seq = DiffusionSEMultishotPulseqSeq(
             name="DiffusionSEMultishot",
             fov=fov,
@@ -100,24 +134,22 @@ def run_t2_multishot(
         img_mag = img_mag.squeeze()
         reconstructed_images.append(img_mag)
 
+    images_stack = np.array(reconstructed_images)  # (n_TEs, Ny, Nx)
+    weighted_images = {
+        f"T2w_TE{int(te)}": images_stack[i]
+        for i, te in enumerate(TEs)
+    }
+    t2_nlls, _ = create_t2_map(images_stack, TEs, method="nlls")
+
+    t2_nlls_oriented = t2_nlls / 1000.0
+    if save_slice_npy:
         save_magnitude_nifti(
-            img_mag,
-            os.path.join(paths.t2_img_dir, f"MultiShotSE-TE{int(te)}.nii.gz"),
+            t2_nlls_oriented,
+            os.path.join(paths.volumes_dir, f"{paths.phantom_name}-T2_multishot_se.nii.gz"),
             res,
         )
-
-    images_stack = np.array(reconstructed_images)  # (n_TEs, Ny, Nx)
-    t2_nlls, _ = create_t2_map(images_stack, TEs, method="nlls")
-    t2_ll, _ = create_t2_map(images_stack, TEs, method="loglinear")
-
-    t2_nlls_oriented = np.fliplr(np.rot90(t2_nlls, 0)) / 1000.0
-    if save_slice_npy:
-        np.save(
-            os.path.join(paths.volumes_dir, f"{paths.phantom_name}-T2_multishot_se.npy"),
-            t2_nlls_oriented,
-        )
     save_tissue_masks(tissue_masks, paths.masks_dir, paths.phantom_name)
-    print(f"[T2-MS] saved T2 map to {paths.volumes_dir}")
+    # print(f"[T2-MS] saved T2 map to {paths.volumes_dir}")
 
     ref_T2 = phantom_map_to_2d(phantom.T2)
     est_T2 = t2_nlls / 1000.0
@@ -125,12 +157,11 @@ def run_t2_multishot(
 
     return {
         "t2_nlls": t2_nlls_oriented,
-        "t2_loglinear": t2_ll,
         "TEs": TEs,
-        "reference_map": ref_T2,
         "tissue_masks": tissue_masks,
         "mae_per_tissue": mae["per_tissue"],
         "mae_total": mae["total"],
         "mae_n_voxels_per_tissue": mae["n_voxels_per_tissue"],
         "mae_n_voxels_total": mae["n_voxels_total"],
+        "weighted_images": weighted_images,
     }

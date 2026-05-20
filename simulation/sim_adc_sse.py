@@ -1,4 +1,34 @@
-"""Single-shot EPI Diffusion SE ADC pipeline (refactor of qMRI_adc.py)."""
+"""Single-shot EPI spin-echo diffusion / ADC simulation pipeline.
+
+Pipeline
+--------
+For each b-value in ``b_values`` and each gradient direction:
+
+1. Build an ``EPIDiffusionSEPulseqSeq`` (single RF90 + RF180 with
+   monopolar PGSE diffusion prep, EPI readout) at the fixed TE.
+2. Write the .seq file and Bloch-simulate with MR0 (GPU when available).
+3. Strip the calibration prefix from the signal, reshape into a ramp-
+   sampled k-space line per direction.
+4. Pull the k-space trajectory from the sequence, normalise to ±0.5,
+   and reconstruct one complex image per direction via NUFFT
+   (cufinufft on GPU, finufft on CPU).
+5. After all b-values have been collected: take the data-floored geometric
+   mean across directions (trace-DWI), then fit the mono-exponential
+   ``S(b) = S0 * exp(-b * ADC)`` per voxel with NLLS.
+
+The TE is held fixed across b-values (Stejskal-Tanner assumption: identical
+T2 weighting across the diffusion-encoding series). One NIfTI per
+(b-value, direction) plus the final ADC NLLS map are saved.
+
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+"""
 from __future__ import annotations
 
 import os
@@ -34,10 +64,11 @@ def run_adc_sse(
     blip_down: bool = True,
     small_delta: Optional[float] = None,
     big_DELTA: Optional[float] = None,
-    system_type=None,
+    system_type: Optional[object] = None,
     use_gpu: Optional[bool] = None,
     save_slice_npy: bool = True,
     phantom_slice: Optional[tuple] = None,
+    dti_maps: bool = False,
 ) -> dict:
     """Run the single-shot SE EPI diffusion / ADC simulation.
 
@@ -67,6 +98,23 @@ def run_adc_sse(
         phantom, phantom_data, tissue_masks = phantom_slice
     else:
         phantom, phantom_data, tissue_masks = load_phantom_for_sim(paths, res, slice_idx)
+
+    # Empty slice (no tissue voxels): return zero-filled maps so the volume
+    # runner can stack them without special-casing.
+    if not any(bool(mask.any()) for mask in tissue_masks.values()):
+        zeros_2d = np.zeros((Ny, Nx), dtype=np.float64)
+        return {
+            "adc_nlls": zeros_2d.copy(), "adc_loglinear": zeros_2d.copy(),
+            "fa_map": zeros_2d.copy(), "md_map": zeros_2d.copy(),
+            "mag_images": np.zeros((len(b_values), b_directions, Ny, Nx), dtype=np.float64),
+            "b_values": b_values, "reference_map": zeros_2d.copy(),
+            "tissue_masks": tissue_masks,
+            "mae_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_total": 0,
+            "mae_n_voxels_per_tissue": {name: 0 for name in tissue_masks},
+            "mae_n_voxels_total": 0,
+            "weighted_images": {},
+        }
 
     all_echo_images = []  # one entry per b-value: (n_dirs, n_echoes, Ny, Nx)
     last_seq = None
@@ -132,48 +180,48 @@ def run_adc_sse(
             ]
         )
 
-        # NUFFT reconstruction (per direction)
-        _nufft_backend = "cufinufft" if use_gpu else "finufft"
-        recon = []
-        for i in range(n_dirs):
-            op = get_operator(
-                backend_name=_nufft_backend,
-                samples=dir_trajs[i],
+        # NUFFT reconstruction (one operator per diffusion direction).
+        nufft_backend = "cufinufft" if use_gpu else "finufft"
+        recon_per_direction = []
+        for d in range(n_dirs):
+            nufft_op = get_operator(
+                backend_name=nufft_backend,
+                samples=dir_trajs[d],
                 shape=(Ny, Nx),
                 n_coils=1,
                 density=True,
             )
-            sig = torch.from_numpy(dir_signal[i]).to(torch.complex64)
-            img_complex = op.adj_op(sig.flatten()).squeeze().cpu().numpy().T
-            recon.append(img_complex)
-
-            nii_name = (
-                f"DiffSE-b{int(b_value)}-dir{i}-TE{int(TE)}-{blip_tag}.nii.gz"
-            )
-            save_magnitude_nifti(
-                np.abs(img_complex), os.path.join(paths.diff_img_dir, nii_name), res
-            )
+            kspace_tensor = torch.from_numpy(dir_signal[d]).to(torch.complex64)
+            img_complex = nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy().T
+            recon_per_direction.append(img_complex)
 
         # (n_dirs, n_echoes=1, Ny, Nx)
-        all_echo_images.append(np.stack(recon, axis=0)[:, None, :, :])
+        all_echo_images.append(np.stack(recon_per_direction, axis=0)[:, None, :, :])
 
     all_echo_images = np.array(all_echo_images)  # (n_b, n_dirs, 1, Ny, Nx)
     mag_images = np.abs(all_echo_images)
     mag_images_combined = mag_images.mean(axis=2)  # (n_b, n_dirs, Ny, Nx)
 
+    weighted_images = {
+        f"ADCw_b{int(b)}_dir{d}_{blip_tag}": mag_images_combined[b_i, d]
+        for b_i, b in enumerate(b_values)
+        for d in range(mag_images_combined.shape[1])
+    }
+
     trace_dwi = compute_trace_dwi(mag_images_combined)
     adc_nlls, _ = create_adc_map(trace_dwi, b_values, method="nlls")
-    adc_ll, _ = create_adc_map(trace_dwi, b_values, method="loglinear")
-    fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
-        mag_images_combined, b_values, last_seq.b_directions
-    )
+    # adc_ll, _ = create_adc_map(trace_dwi, b_values, method="loglinear")
+    if dti_maps:
+        fa_map, md_map, eigvals_map, dti_s0_map = create_dti_maps(
+            mag_images_combined, b_values, last_seq.b_directions
+        )
 
     adc_nlls_oriented = adc_nlls * 1e3
     if save_slice_npy:
         out_path = os.path.join(
-            paths.volumes_dir, f"{paths.phantom_name}-ADC_SSE_{blip_tag}.npy"
+            paths.volumes_dir, f"{paths.phantom_name}-ADC_SSE_{blip_tag}.nii.gz"
         )
-        np.save(out_path, adc_nlls_oriented)
+        save_magnitude_nifti(adc_nlls_oriented, out_path, res)
         print(f"[ADC-SSE] saved {out_path}")
 
     # MAE per tissue + combined. Both maps in x10^-3 mm^2/s units.
@@ -183,9 +231,9 @@ def run_adc_sse(
 
     return {
         "adc_nlls": adc_nlls_oriented,
-        "adc_loglinear": adc_ll,
-        "fa_map": fa_map,
-        "md_map": md_map,
+        # "adc_loglinear": adc_ll,
+        "fa_map": fa_map if dti_maps else None,
+        "md_map": md_map if dti_maps else None,
         "mag_images": mag_images_combined,
         "b_values": b_values,
         "reference_map": ref_D,
@@ -194,4 +242,5 @@ def run_adc_sse(
         "mae_total": mae["total"],
         "mae_n_voxels_per_tissue": mae["n_voxels_per_tissue"],
         "mae_n_voxels_total": mae["n_voxels_total"],
+        "weighted_images": weighted_images,
     }

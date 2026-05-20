@@ -1,6 +1,15 @@
 """
 Vectorised T2 relaxometry from a multi-echo magnitude image stack.
 
+Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
+Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
+Date        : 2026
+Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
+
+Funding acknowledgement (mandatory):
+    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+    December 2024–November 2028, Grant Agreement No. 101169519).
+
 This module fits the mono-exponential decay model
 
     S(TE) = S0 * exp(-TE / T2)
