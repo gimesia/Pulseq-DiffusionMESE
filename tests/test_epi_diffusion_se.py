@@ -133,6 +133,30 @@ def test_blip_polarity_both_directions(se_kwargs_factory, blip_down):
     assert passed
 
 
+@pytest.mark.parametrize("pff", [0.75, 1.0])
+def test_te_invariant_under_blip_polarity(se_kwargs_factory, pff):
+    """Blip polarity must not shift TE — guards the readout-layer Ny_pre mirror.
+
+    The shared EPIReadout previously placed ky=0 one acquisition index off
+    between blip_down=True/False, leaking 1 line_duration into time_until_echo
+    and producing a ~1 ms TE drift between distortion-correction pairs.
+    """
+    blip_down_seq = EPIDiffusionSEPulseqSeq(
+        **se_kwargs_factory(SystemLimitType.SAFE, blip_down=True, partial_fourier_factor=pff)
+    )
+    blip_up_seq = EPIDiffusionSEPulseqSeq(
+        **se_kwargs_factory(SystemLimitType.SAFE, blip_down=False, partial_fourier_factor=pff)
+    )
+    assert blip_down_seq.epi.Ny_pre == blip_up_seq.epi.Ny_pre, (
+        f"pff={pff}: Ny_pre differs — down={blip_down_seq.epi.Ny_pre}, "
+        f"up={blip_up_seq.epi.Ny_pre}"
+    )
+    assert blip_down_seq.TE == blip_up_seq.TE, (
+        f"pff={pff}: TE differs — down={blip_down_seq.TE*1e3:.3f} ms, "
+        f"up={blip_up_seq.TE*1e3:.3f} ms"
+    )
+
+
 @pytest.mark.parametrize("rf180_spoiler", [True, False])
 def test_rf180_spoiler_toggle(se_kwargs_factory, rf180_spoiler):
     """rf180_spoiler=True consumes additional time inside TE/TR."""

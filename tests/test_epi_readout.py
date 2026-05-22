@@ -105,6 +105,33 @@ def test_blip_polarity_flips_gy_sign(system_type):
     assert down.ky_indices[0] < 0 < up.ky_indices[0]
 
 
+@pytest.mark.parametrize(
+    "Ny, pff",
+    [(64, 0.75), (96, 0.75), (64, 1.0), (96, 1.0)],
+)
+def test_blip_polarity_is_mirror_symmetric(system_type, Ny, pff):
+    """blip_down=False must be the exact ky-mirror of blip_down=True.
+
+    Off-by-one in _setup_kspace_trajectory's else-branch previously placed ky=0
+    one acquisition index off between polarities, leaking a 1-line_duration
+    bias into time_until_echo and downstream TE2/TE3. Lock that down here so the
+    sequence-level ms-snapping cannot mask a recurrence.
+    """
+    down = _make_readout(system_type, Ny=Ny, partial_fourier_factor=pff)
+    up = _make_readout(system_type, Ny=Ny, partial_fourier_factor=pff, blip_down=False)
+
+    assert down.Ny_pre == up.Ny_pre, (
+        f"Ny_pre mismatch: down={down.Ny_pre}, up={up.Ny_pre} (Ny={Ny}, pff={pff})"
+    )
+    assert down.Ny_post == up.Ny_post
+    assert down.Ny_eff == up.Ny_eff
+    assert down.time_until_echo == pytest.approx(up.time_until_echo, abs=1e-12)
+    assert down.duration == pytest.approx(up.duration, abs=1e-12)
+    assert down.prephaser_duration == pytest.approx(up.prephaser_duration, abs=1e-12)
+    # Mirror about ky=0: blip-up coverage equals -1 × blip-down coverage.
+    assert set(down.ky_indices.tolist()) == set((-up.ky_indices).tolist())
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Hardware compliance
 # ──────────────────────────────────────────────────────────────────────────

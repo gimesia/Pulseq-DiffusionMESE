@@ -379,13 +379,15 @@ class EPIReadout:
                 self.acceleration_factor, Ny_post_requested, self.acceleration_factor
             )
         else:
-            # Reversed: start from positive ky and step toward negative
+            # Mirror of the blip_down=True coverage about ky=0: PF short side on +ky.
+            ky_positive = np.arange(
+                0, Ny_pre_requested + 1, self.acceleration_factor
+            )
             ky_negative = np.arange(
                 -self.acceleration_factor,
-                -Ny_post_requested - 1,
+                -Ny_post_requested,
                 -self.acceleration_factor,
             )
-            ky_positive = np.arange(0, Ny_pre_requested, self.acceleration_factor)
 
         # Sort ascending then reverse for blip-up so acquisition order matches traversal direction
         self.ky_indices = np.sort(np.unique(np.concatenate([ky_negative, ky_positive])))

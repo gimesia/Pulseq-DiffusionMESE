@@ -110,23 +110,28 @@ def test_te3_whole_millisecond_in_95_110_range(TE_ms, triple_kwargs_factory):
     )
 
 
+@pytest.mark.parametrize("pff", [0.75, 1.0])
 @pytest.mark.parametrize("TE_ms", list(range(80, 125, 5)))
-def test_te3_step_size_in_95_110_range(TE_ms, triple_kwargs_factory):
+def test_te_invariant_under_blip_polarity(TE_ms, pff, triple_kwargs_factory):
     """blip-down and blip-up must produce identical TE1, TE2, TE3.
 
     Blip polarity only reverses the k-space traversal direction and must not
-    change echo timing. A bug in EPIReadout._setup_kspace_trajectory() places
-    ky=0 at Ny_pre=15 for blip_down=False vs Ny_pre=16 for blip_down=True
-    (pff=0.75, Ny=64), so the echo readout centre is 1 line-duration earlier
-    for one polarity. This shifts TE1/TE2/TE3 via time_until_echo. Comparing
-    Ny_pre (= echo_line_index) directly catches the bug regardless of how the
-    ms-ceiling rounding in the parent sequence absorbs the timing shift.
+    change echo timing. A prior off-by-one in EPIReadout._setup_kspace_trajectory()
+    placed ky=0 at Ny_pre=15 for blip_down=False vs Ny_pre=16 for blip_down=True
+    (pff=0.75, Ny=64), shifting the echo readout centre by 1 line_duration and
+    leaking into TE1/TE2/TE3 via time_until_echo. We assert Ny_pre parity
+    directly so a regression points at the readout layer, not the parent
+    sequence's ms-snapping.
     """
     blip_down_seq = EPIDiffusionTripleSEPulseqSeq(
-        **triple_kwargs_factory(SystemLimitType.SAFE, TE=TE_ms, blip_down=True)
+        **triple_kwargs_factory(
+            SystemLimitType.SAFE, TE=TE_ms, blip_down=True, partial_fourier_factor=pff
+        )
     )
     blip_up_seq = EPIDiffusionTripleSEPulseqSeq(
-        **triple_kwargs_factory(SystemLimitType.SAFE, TE=TE_ms, blip_down=False)
+        **triple_kwargs_factory(
+            SystemLimitType.SAFE, TE=TE_ms, blip_down=False, partial_fourier_factor=pff
+        )
     )
 
     for name, epi_d, epi_u, te_d, te_u in [
@@ -134,10 +139,13 @@ def test_te3_step_size_in_95_110_range(TE_ms, triple_kwargs_factory):
         ("TE2/EPI2", blip_down_seq.epi2, blip_up_seq.epi2, blip_down_seq.TE2, blip_up_seq.TE2),
         ("TE3/EPI3", blip_down_seq.epi3, blip_up_seq.epi3, blip_down_seq.TE3, blip_up_seq.TE3),
     ]:
+        assert epi_d.Ny_pre == epi_u.Ny_pre, (
+            f"TE1={TE_ms} ms, pff={pff}, {name}: Ny_pre differs at readout layer — "
+            f"blip-down Ny_pre={epi_d.Ny_pre}, blip-up Ny_pre={epi_u.Ny_pre}"
+        )
         assert te_d == te_u, (
-            f"TE1={TE_ms} ms, {name}: echo line index (Ny_pre) differs — "
-            f"blip-down Ny_pre={epi_d.Ny_pre} (TE={te_d*1e3:.1f} ms), "
-            f"blip-up Ny_pre={epi_u.Ny_pre} (TE={te_u*1e3:.1f} ms)"
+            f"TE1={TE_ms} ms, pff={pff}, {name}: "
+            f"blip-down TE={te_d*1e3:.3f} ms, blip-up TE={te_u*1e3:.3f} ms"
         )
         
 
