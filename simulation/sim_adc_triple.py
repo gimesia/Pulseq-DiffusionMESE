@@ -71,6 +71,7 @@ def run_adc_triple(
     save_slice_npy: bool = True,
     phantom_slice: Optional[tuple] = None,
     dti_maps: bool = False,
+    alternating_blip_polarity: bool = False,
 ) -> dict:
     """Run the triple SE EPI diffusion / ADC simulation.
 
@@ -142,7 +143,7 @@ def run_adc_triple(
             phase_cycling=True,
             partial_fourier_factor=1,
             logger=logger,
-            alternating_blip_polarity=True,
+            alternating_blip_polarity=alternating_blip_polarity,
         )
         seq.write()
         last_seq = seq

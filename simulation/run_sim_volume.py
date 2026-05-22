@@ -187,7 +187,7 @@ def run_all_qmri_simulations_volume(
     small_delta_t2: Optional[float] = None,
     big_DELTA_t2: Optional[float] = None,
     ETL: int = 1,
-    blip_down: bool = True,
+    alternating_blip_polarity: bool = False,
     use_gpu: Optional[bool] = None,
     pipelines: Optional[Iterable[str]] = None,
     save_volume_nifti: bool = True,
@@ -355,6 +355,7 @@ def run_all_qmri_simulations_volume(
         use_gpu=use_gpu,
         save_slice_npy=False,
         preloaded_phantom=preloaded,
+        alternating_blip_polarity=alternating_blip_polarity,
     )
 
     for slice_position, slice_idx in enumerate(slice_indices):
@@ -563,7 +564,7 @@ if __name__ == "__main__":
     pipelines = ("adc_triple", "t2_triple",)
     results = run_all_qmri_simulations_volume(
         paths,
-        TE1_values_triple=range(65, 66, 5),   # (3 per TR)
+        TE1_values_triple=range(65, 125, 5),   # (3 per TR)
         b_values=range(0, 1000, 1000),      # fewer b-values to speed up testing
         b_directions=1,                    # fewer directions to speed up testing
         pipelines=("t2_triple", "adc_triple"),   # remove kwarg to run all 6 pipelines

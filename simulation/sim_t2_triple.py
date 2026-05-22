@@ -63,6 +63,7 @@ def run_t2_triple(
     use_gpu: Optional[bool] = None,
     save_slice_npy: bool = True,
     phantom_slice: Optional[tuple] = None,
+    alternating_blip_polarity: bool = False,
 ) -> dict:
     """Run the triple SE EPI T2-relaxometry simulation.
 
@@ -134,7 +135,7 @@ def run_t2_triple(
             blip_down=blip_down,
             logger=logger,
             fit_epi=True,
-            alternating_blip_polarity=True,
+            alternating_blip_polarity=alternating_blip_polarity,
         )
         seq.write()
         

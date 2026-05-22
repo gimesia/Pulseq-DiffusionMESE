@@ -93,6 +93,7 @@ def run_all_qmri_simulations(
     big_DELTA_t2: float = 0.03,
     ETL: int = 1,
     blip_down: bool = True,
+    alternating_blip_polarity: bool = False,
     use_gpu: Optional[bool] = None,
     pipelines: Optional[Iterable[str]] = None,
     save_slice_npy: bool = True,
@@ -241,6 +242,7 @@ def run_all_qmri_simulations(
             blip_down=blip_down,
             small_delta=small_delta,
             big_DELTA=big_DELTA,
+            alternating_blip_polarity=alternating_blip_polarity,
             **shared_kwargs,
         )
         timings["adc_triple"] = time.perf_counter() - t_start
@@ -254,6 +256,7 @@ def run_all_qmri_simulations(
             blip_down=blip_down,
             small_delta=small_delta_t2,
             big_DELTA=big_DELTA_t2,
+            alternating_blip_polarity=alternating_blip_polarity,
             **shared_kwargs,
         )
         timings["t2_triple"] = time.perf_counter() - t_start
