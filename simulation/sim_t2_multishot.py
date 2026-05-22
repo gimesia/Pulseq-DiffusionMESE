@@ -29,11 +29,9 @@ import torch
 
 from utils_sim_lib import (
     PathConfig,
-    compute_mae_per_tissue,
     ensure_seq_path_on_syspath,
     load_phantom_for_sim,
     make_quiet_logger,
-    phantom_map_to_2d,
     save_magnitude_nifti,
     save_tissue_masks,
     simulate_signal,
@@ -87,14 +85,10 @@ def run_t2_multishot(
     if not any(bool(mask.any()) for mask in tissue_masks.values()):
         zeros_2d = np.zeros((Ny, Nx), dtype=np.float64)
         return {
-            "t2_nlls": zeros_2d.copy(), "t2_loglinear": zeros_2d.copy(),
-            "TEs": TEs, "reference_map": zeros_2d.copy(),
-            "tissue_masks": tissue_masks,
-            "mae_per_tissue": {name: 0 for name in tissue_masks},
-            "mae_total": 0,
-            "mae_n_voxels_per_tissue": {name: 0 for name in tissue_masks},
-            "mae_n_voxels_total": 0,
+            "t2_nlls": zeros_2d.copy(),
+            "TEs": TEs,
             "weighted_images": {},
+            "phantom": phantom,
         }
 
     reconstructed_images = []
@@ -151,17 +145,9 @@ def run_t2_multishot(
     save_tissue_masks(tissue_masks, paths.masks_dir, paths.phantom_name)
     # print(f"[T2-MS] saved T2 map to {paths.volumes_dir}")
 
-    ref_T2 = phantom_map_to_2d(phantom.T2)
-    est_T2 = t2_nlls / 1000.0
-    mae = compute_mae_per_tissue(est_T2, ref_T2, tissue_masks)
-
     return {
         "t2_nlls": t2_nlls_oriented,
         "TEs": TEs,
-        "tissue_masks": tissue_masks,
-        "mae_per_tissue": mae["per_tissue"],
-        "mae_total": mae["total"],
-        "mae_n_voxels_per_tissue": mae["n_voxels_per_tissue"],
-        "mae_n_voxels_total": mae["n_voxels_total"],
         "weighted_images": weighted_images,
+        "phantom": phantom,
     }

@@ -205,7 +205,7 @@ def t2_nlls(
     data,
     te_list,
     mask_threshold_frac=0.15,
-    t2_bounds=(0.0, 1800.0),
+    t2_bounds=(0.0, 3),
     init=None,
     maxfev=200,
 ):
@@ -229,7 +229,7 @@ def t2_nlls(
         Default 0.15.
     t2_bounds : tuple of float, optional
         (lower, upper) bounds on T2 in milliseconds. Default
-        (0, 1800), which comfortably contains in-vivo brain CSF at
+        (0, 3000), which comfortably contains in-vivo brain CSF at
         3T (~2000 ms). Tighten for higher-field or phantom-only data.
     init : tuple of ndarray or None, optional
         Initial (s0_init, t2_init) maps, each shape (ny, nx). If

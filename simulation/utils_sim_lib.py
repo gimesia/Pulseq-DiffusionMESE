@@ -401,6 +401,88 @@ def phantom_map_to_2d(parameter_map: object) -> np.ndarray:
 
 
 # ----------------------------------------------------------------------------
+#  ANTs registration helpers (estimated map → reference) and post-reg MAE
+# ----------------------------------------------------------------------------
+def register_to_reference_2d(
+    moving: np.ndarray,
+    reference: np.ndarray,
+    *,
+    type_of_transform: str = "Rigid",
+) -> np.ndarray:
+    """ANTs registration of a 2-D moving map onto a 2-D reference.
+
+    Returns the warped moving image on the reference grid. If either input is
+    all-NaN or all-zero (empty slice), the moving image is returned unchanged.
+    """
+    import ants  # local import — heavy dependency
+
+    moving_2d = np.squeeze(np.asarray(moving)).astype(np.float32)
+    reference_2d = np.squeeze(np.asarray(reference)).astype(np.float32)
+    moving_finite = np.nan_to_num(moving_2d, nan=0.0, posinf=0.0, neginf=0.0)
+    reference_finite = np.nan_to_num(reference_2d, nan=0.0, posinf=0.0, neginf=0.0)
+    if not np.any(moving_finite) or not np.any(reference_finite):
+        return moving_2d
+    warped = ants.registration(
+        ants.from_numpy(reference_finite),
+        ants.from_numpy(moving_finite),
+        type_of_transform=type_of_transform,
+    )["warpedmovout"].numpy()
+    return warped
+
+
+def register_to_reference_3d(
+    moving: np.ndarray,
+    reference: np.ndarray,
+    *,
+    type_of_transform: str = "Rigid",
+) -> np.ndarray:
+    """Per-slice ANTs registration of a 3-D volume.
+
+    Both arrays are expected as ``(Ny, Nx, n_slices)`` — slice is the last axis.
+    Each slice is registered independently. Empty / all-NaN slices are left as-is.
+    """
+    moving_3d = np.asarray(moving)
+    reference_3d = np.asarray(reference)
+    if moving_3d.shape != reference_3d.shape:
+        raise ValueError(
+            f"Moving {moving_3d.shape} and reference {reference_3d.shape} shapes differ."
+        )
+    registered = np.full_like(moving_3d, np.nan, dtype=np.float32)
+    for s in range(moving_3d.shape[-1]):
+        registered[..., s] = register_to_reference_2d(
+            moving_3d[..., s], reference_3d[..., s], type_of_transform=type_of_transform
+        )
+    return registered
+
+
+def mae_after_registration(
+    estimated: np.ndarray,
+    reference: np.ndarray,
+    tissue_masks: dict,
+    *,
+    register: bool = True,
+    type_of_transform: str = "Rigid",
+) -> dict:
+    """Optionally register ``estimated`` to ``reference``, then compute MAE per tissue.
+
+    Wraps :func:`compute_mae_per_tissue`. When the estimated map is all-zero
+    (empty slice), returns zero/empty MAE without running registration.
+    """
+    est = np.squeeze(np.asarray(estimated))
+    ref = np.squeeze(np.asarray(reference))
+    if not np.any(np.nan_to_num(est)):
+        return {
+            "per_tissue": {name: 0.0 for name in tissue_masks},
+            "total": 0.0,
+            "n_voxels_per_tissue": {name: 0 for name in tissue_masks},
+            "n_voxels_total": 0,
+        }
+    if register:
+        est = register_to_reference_2d(est, ref, type_of_transform=type_of_transform)
+    return compute_mae_per_tissue(est, ref, tissue_masks)
+
+
+# ----------------------------------------------------------------------------
 #  Slice-count probe (no modification to phantom_loader)
 # ----------------------------------------------------------------------------
 def probe_phantom_n_slices(

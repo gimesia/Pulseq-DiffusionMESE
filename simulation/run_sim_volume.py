@@ -51,7 +51,14 @@ import nibabel as nib
 import numpy as np
 import torch
 
-from utils_sim_lib import PathConfig, PreloadedPhantom, preload_phantom_for_sim, probe_phantom_n_slices
+from utils_sim_lib import (
+    PathConfig,
+    PreloadedPhantom,
+    compute_mae_per_tissue,
+    preload_phantom_for_sim,
+    probe_phantom_n_slices,
+    register_to_reference_3d,
+)
 from run_sim import (
     DEFAULT_ADC_BVALUES,
     DEFAULT_T2_TES,
@@ -107,6 +114,12 @@ def _save_volume_nifti(volume: np.ndarray, path: str, res_mm: float, fill_nan: b
         fill_nan: If True (default), replace NaN/Inf with 0 before saving.
     """
     affine = np.diag([res_mm, res_mm, res_mm, 1.0]).astype(np.float64)
+    data = np.nan_to_num(volume, nan=0.0, posinf=0.0, neginf=0.0) if fill_nan else volume
+    nan_count = np.isnan(volume).sum()
+    if nan_count > 0:
+        pass
+        # print(f"[_save_volume_nifti] {'Filled' if fill_nan else 'Warning: unfilled'} {nan_count} NaN(s) in {path}")
+    nib.save(nib.Nifti1Image(data.astype(np.float32), affine), path)
 
 
 def _reorient_volume(vol_3d: np.ndarray) -> np.ndarray:
@@ -245,7 +258,7 @@ def run_all_qmri_simulations_volume(
     }
     for tissue_name, mask_volume in volume_tissue_masks.items():
         _save_volume_nifti(
-            _reorient_volume(mask_volume.astype(np.float32)),
+            mask_volume.astype(np.float32),
             os.path.join(paths.masks_dir, f"{paths.phantom_name}-mask_{tissue_name}_volume.nii.gz"),
             res,
         )
@@ -272,17 +285,15 @@ def run_all_qmri_simulations_volume(
     # Pre-allocate output volumes (NaN-init so skipped slices stay as NaN).
     # Shape: (Ny, Nx, n_slices) — slice is the last dimension. One entry per
     # variant key (e.g. "t2_sse_blipdown", "t2_sse_blipup", "t2_multishot").
+    # MAE arrays are NOT pre-allocated here — MAE is computed post-hoc once
+    # all slices have been simulated and the full volume has been registered
+    # to the reference.
     vol: dict[str, dict] = {}
     for pipeline_name, suffix, _ in variant_keys:
         variant_key = f"{pipeline_name}{suffix}"
         variant_data: dict = {}
         for map_name in _MAP_KEYS.get(pipeline_name, ()):
             variant_data[map_name] = np.full((Ny, Nx, n_slices_total), np.nan, dtype=np.float32)
-        variant_data["mae_total"]          = np.full(n_slices_total, np.nan, dtype=float)
-        variant_data["mae_n_voxels_total"] = np.zeros(n_slices_total, dtype=int)
-        variant_data["mae_per_tissue"]          = {t: np.full(n_slices_total, np.nan, dtype=float) for t in preloaded.tissue_names}
-        variant_data["mae_n_voxels_per_tissue"] = {t: np.zeros(n_slices_total, dtype=int)          for t in preloaded.tissue_names}
-        variant_data["tissue_masks"]            = {t: np.zeros((Ny, Nx, n_slices_total), dtype=bool) for t in preloaded.tissue_names}
         # Weighted-image volumes are allocated lazily on the first non-empty
         # slice for each variant (stems aren't known until then).
         variant_data["weighted_vols"] = {}
@@ -302,18 +313,13 @@ def run_all_qmri_simulations_volume(
         pipeline_name: str,
         slice_position: int,
     ) -> None:
-        """Write one slice's worth of results into the pre-allocated volumes."""
+        """Write one slice's worth of results into the pre-allocated volumes.
+
+        Only the estimated map and the weighted images are stacked — MAE and
+        tissue-masks are computed / known at the volume level.
+        """
         for map_name in _MAP_KEYS.get(pipeline_name, ()):
             target[map_name][..., slice_position] = slice_result[map_name]
-        target["mae_total"][slice_position]          = slice_result["mae_total"]
-        target["mae_n_voxels_total"][slice_position] = slice_result["mae_n_voxels_total"]
-        for tissue_name in preloaded.tissue_names:
-            target["mae_per_tissue"][tissue_name][slice_position]          = slice_result["mae_per_tissue"][tissue_name]
-            target["mae_n_voxels_per_tissue"][tissue_name][slice_position] = slice_result["mae_n_voxels_per_tissue"][tissue_name]
-            tissue_mask = slice_result["tissue_masks"][tissue_name]
-            target["tissue_masks"][tissue_name][..., slice_position] = (
-                tissue_mask.cpu().numpy() if hasattr(tissue_mask, "cpu") else np.asarray(tissue_mask)
-            )
         # Weighted-image volumes: lazy-allocate on first encounter of each
         # stem, then write the 2D slice into the matching 3D array.
         weighted_imgs = slice_result.get("weighted_images") or {}
@@ -326,7 +332,7 @@ def run_all_qmri_simulations_volume(
                 arr = arr.cpu().numpy()
             weighted_vols[stem][..., slice_position] = arr
         if "_metadata_captured" not in target:
-            for metadata_key in ("b_values", "TEs", "echo_TEs_ms"):
+            for metadata_key in ("b_values", "TEs"):
                 if metadata_key in slice_result:
                     target[metadata_key] = slice_result[metadata_key]
             target["_metadata_captured"] = True
@@ -439,12 +445,47 @@ def run_all_qmri_simulations_volume(
     slice_idx_arr = np.asarray(slice_indices, dtype=int)
     np.save(os.path.join(paths.volumes_dir, f"{paths.phantom_name}-slice_indices.npy"), slice_idx_arr)
 
-    # Compute volume-level MAE from pre-allocated arrays and finalise output.
+    # Post-hoc registration + MAE. For each variant, register the estimated
+    # volume slice-by-slice to the phantom reference (ANTs Rigid), then
+    # compute per-slice per-tissue MAE and aggregate via voxel-weighted mean.
     out: dict = {"slice_indices": slice_idx_arr}
     variant_key_names = [f"{name}{suffix}" for name, suffix, _ in variant_keys]
+    pipeline_name_by_variant = {
+        f"{name}{suffix}": name for name, suffix, _ in variant_keys
+    }
+    print("\n[volume] running ANTs Rigid registration + per-tissue MAE per variant", flush=True)
     for variant_key in variant_key_names:
-        n_voxels_total = vol[variant_key]["mae_n_voxels_total"]
-        mae_total_per_slice = vol[variant_key]["mae_total"]
+        pipeline_name = pipeline_name_by_variant[variant_key]
+        map_key = "adc_nlls" if pipeline_name.startswith("adc") else "t2_nlls"
+        est_volume = vol[variant_key][map_key]
+        ref_volume = ref_D_volume if pipeline_name.startswith("adc") else ref_T2_volume
+
+        print(f"  [register] {variant_key}", flush=True)
+        registered_volume = register_to_reference_3d(est_volume, ref_volume)
+        vol[variant_key][f"{map_key}_registered"] = registered_volume
+
+        mae_total_per_slice = np.full(n_slices_total, np.nan, dtype=float)
+        n_voxels_total      = np.zeros(n_slices_total, dtype=int)
+        mae_per_tissue = {t: np.full(n_slices_total, np.nan, dtype=float) for t in preloaded.tissue_names}
+        n_voxels_per_tissue = {t: np.zeros(n_slices_total, dtype=int) for t in preloaded.tissue_names}
+        for slice_position in range(n_slices_total):
+            est_slice = registered_volume[..., slice_position]
+            if not np.any(np.nan_to_num(est_slice)):
+                continue
+            ref_slice = ref_volume[..., slice_position]
+            slice_masks = {t: volume_tissue_masks[t][..., slice_position] for t in preloaded.tissue_names}
+            mae = compute_mae_per_tissue(est_slice, ref_slice, slice_masks)
+            mae_total_per_slice[slice_position] = mae["total"]
+            n_voxels_total[slice_position]      = mae["n_voxels_total"]
+            for tissue_name in preloaded.tissue_names:
+                mae_per_tissue[tissue_name][slice_position]      = mae["per_tissue"][tissue_name]
+                n_voxels_per_tissue[tissue_name][slice_position] = mae["n_voxels_per_tissue"][tissue_name]
+
+        vol[variant_key]["mae_total"]               = mae_total_per_slice
+        vol[variant_key]["mae_n_voxels_total"]      = n_voxels_total
+        vol[variant_key]["mae_per_tissue"]          = mae_per_tissue
+        vol[variant_key]["mae_n_voxels_per_tissue"] = n_voxels_per_tissue
+
         valid = np.isfinite(mae_total_per_slice) & (n_voxels_total > 0)
         vol[variant_key]["mae_total_volume"] = (
             float(np.sum(mae_total_per_slice[valid] * n_voxels_total[valid]) / n_voxels_total[valid].sum())
@@ -452,8 +493,8 @@ def run_all_qmri_simulations_volume(
         )
         vol[variant_key]["mae_per_tissue_volume"] = {}
         for tissue_name in preloaded.tissue_names:
-            mae_per_slice = vol[variant_key]["mae_per_tissue"][tissue_name]
-            n_voxels_per_slice = vol[variant_key]["mae_n_voxels_per_tissue"][tissue_name]
+            mae_per_slice = mae_per_tissue[tissue_name]
+            n_voxels_per_slice = n_voxels_per_tissue[tissue_name]
             valid_per_tissue = np.isfinite(mae_per_slice) & (n_voxels_per_slice > 0)
             vol[variant_key]["mae_per_tissue_volume"][tissue_name] = (
                 float(np.sum(mae_per_slice[valid_per_tissue] * n_voxels_per_slice[valid_per_tissue])
@@ -528,6 +569,7 @@ if __name__ == "__main__":
         pipelines=("t2_triple", "adc_triple"),   # remove kwarg to run all 6 pipelines
     )
 
+    print(results.keys())
 
     for pipeline_name in pipelines:
         summary = results[pipeline_name]

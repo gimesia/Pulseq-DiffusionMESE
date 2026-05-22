@@ -49,6 +49,7 @@ from utils_sim_lib import (
     PreloadedPhantom,
     extract_phantom_slice,
     load_phantom_for_sim,
+    mae_after_registration,
     phantom_map_to_2d,
     save_magnitude_nifti,
 )
@@ -256,6 +257,27 @@ def run_all_qmri_simulations(
             **shared_kwargs,
         )
         timings["t2_triple"] = time.perf_counter() - t_start
+
+    # Post-hoc MAE: register each estimated map to the phantom reference, then
+    # compute MAE per tissue. The reference is read from the per-pipeline
+    # phantom snapshot; tissue masks come from the shared phantom_slice tuple.
+    slice_tissue_masks = phantom_slice[2]
+    for pipeline_name, pipeline_result in results.items():
+        if pipeline_name == "_timings" or "phantom" not in pipeline_result:
+            continue
+        result_phantom = pipeline_result["phantom"]
+        if pipeline_name.startswith("adc"):
+            est_map = pipeline_result["adc_nlls"]
+            ref_map = phantom_map_to_2d(result_phantom.D)
+        else:
+            est_map = pipeline_result["t2_nlls"]
+            ref_map = phantom_map_to_2d(result_phantom.T2)
+        mae = mae_after_registration(est_map, ref_map, slice_tissue_masks, register=True)
+        pipeline_result["reference_map"] = ref_map
+        pipeline_result["mae_per_tissue"]          = mae["per_tissue"]
+        pipeline_result["mae_total"]               = mae["total"]
+        pipeline_result["mae_n_voxels_per_tissue"] = mae["n_voxels_per_tissue"]
+        pipeline_result["mae_n_voxels_total"]      = mae["n_voxels_total"]
 
     results["_timings"] = timings
     return results

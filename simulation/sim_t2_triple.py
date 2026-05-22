@@ -39,11 +39,9 @@ import torch
 
 from utils_sim_lib import (
     PathConfig,
-    compute_mae_per_tissue,
     ensure_seq_path_on_syspath,
     load_phantom_for_sim,
     make_quiet_logger,
-    phantom_map_to_2d,
     save_magnitude_nifti,
     simulate_signal,
 )
@@ -99,14 +97,10 @@ def run_t2_triple(
     if not any(bool(mask.any()) for mask in tissue_masks.values()):
         zeros_2d = np.zeros((Ny, Nx), dtype=np.float64)
         return {
-            "t2_nlls": zeros_2d.copy(), "t2_loglinear": zeros_2d.copy(),
-            "TEs": TE1_values, "reference_map": zeros_2d.copy(),
-            "tissue_masks": tissue_masks,
-            "mae_per_tissue": {name: 0 for name in tissue_masks},
-            "mae_total": 0,
-            "mae_n_voxels_per_tissue": {name: 0 for name in tissue_masks},
-            "mae_n_voxels_total": 0,
+            "t2_nlls": zeros_2d.copy(),
+            "TEs": TE1_values,
             "weighted_images": {},
+            "phantom": phantom,
         }
 
     all_echo_images: list[np.ndarray] = []
@@ -234,18 +228,9 @@ def run_t2_triple(
         save_magnitude_nifti(np.rot90(np.flipud(t2_nlls_oriented), 1), out_path, res)
         print(f"[T2-3SE] saved {out_path}")
 
-    ref_T2 = phantom_map_to_2d(phantom.T2)
-    est_T2 = t2_nlls / 1000.0
-    mae = compute_mae_per_tissue(est_T2, ref_T2, tissue_masks)
-
     return {
         "t2_nlls": t2_nlls_oriented,
         "TEs": te_sorted,
-        "reference_map": ref_T2,
-        "tissue_masks": tissue_masks,
-        "mae_per_tissue": mae["per_tissue"],
-        "mae_total": mae["total"],
-        "mae_n_voxels_per_tissue": mae["n_voxels_per_tissue"],
-        "mae_n_voxels_total": mae["n_voxels_total"],
         "weighted_images": weighted_images,
+        "phantom": phantom,
     }

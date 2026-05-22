@@ -33,12 +33,10 @@ import torch
 from utils_sim_lib import (
     PathConfig,
     affine_from_res,
-    compute_mae_per_tissue,
     compute_trace_dwi,
     ensure_seq_path_on_syspath,
     load_phantom_for_sim,
     make_quiet_logger,
-    phantom_map_to_2d,
     save_magnitude_nifti,
     save_tissue_masks,
     simulate_signal,
@@ -100,15 +98,10 @@ def run_adc_multishot(
     if not any(bool(mask.any()) for mask in tissue_masks.values()):
         zeros_2d = np.zeros((Ny, Nx), dtype=np.float64)
         return {
-            "adc_nlls": zeros_2d.copy(), "adc_loglinear": zeros_2d.copy(),
-            "fa_map": zeros_2d.copy(), "md_map": zeros_2d.copy(),
-            "b_values": b_values, "reference_map": zeros_2d.copy(),
-            "tissue_masks": tissue_masks,
-            "mae_per_tissue": {name: 0 for name in tissue_masks},
-            "mae_total": np.nan,
-            "mae_n_voxels_per_tissue": {name: 0 for name in tissue_masks},
-            "mae_n_voxels_total": 0,
+            "adc_nlls": zeros_2d.copy(),
+            "b_values": b_values,
             "weighted_images": {},
+            "phantom": phantom,
         }
 
     images_per_te = {te: [] for te in TE_values}
@@ -200,20 +193,13 @@ def run_adc_multishot(
     save_tissue_masks(tissue_masks, paths.masks_dir, paths.phantom_name)
     # print(f"[ADC-MS] saved ADC map to {paths.volumes_dir}")
 
-    ref_D = phantom_map_to_2d(phantom.D)
-    est_adc = adc_nlls * 1e3
-    mae = compute_mae_per_tissue(est_adc, ref_D, tissue_masks)
-
-    return {
+    result = {
         "adc_nlls": adc_nlls_oriented,
-        # "adc_loglinear": adc_ll,
-        "fa_map": fa_map if dti_maps else None,
-        "md_map": md_map if dti_maps else None,
         "b_values": b_values,
-        "tissue_masks": tissue_masks,
-        "mae_per_tissue": mae["per_tissue"],
-        "mae_total": mae["total"],
-        "mae_n_voxels_per_tissue": mae["n_voxels_per_tissue"],
-        "mae_n_voxels_total": mae["n_voxels_total"],
         "weighted_images": weighted_images,
+        "phantom": phantom,
     }
+    if dti_maps:
+        result["fa_map"] = fa_map
+        result["md_map"] = md_map
+    return result
