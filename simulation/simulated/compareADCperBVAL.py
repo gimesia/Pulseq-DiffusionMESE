@@ -19,17 +19,20 @@ FIGS_DIR = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE
 
 OUTPUT_PATH = os.path.join(FIGS_DIR, "ADC_estimation_comparison.png")
 
-BVALS            = list(range(0, 2001, 100))   # 0, 100, ..., 1000
-N_DIRS           = 6                            # dir0..dir5
-TE               = 100
+BVALS = list(range(0, 2001, 100))  # 0, 100, ..., 1000
+N_DIRS = 6  # dir0..dir5
+TE = 100
 MASK_THRESH_FRAC = 0.2
 
 SEQUENCES = ["DiffMultiShotSE", "DiffSE", "DiffTripleSE"]
 SEQ_TITLES = ["MultiShot SE", "Single SE", "Triple SE"]
 
-CMAP = cm.get_cmap('plasma')
-COLORS = [CMAP(i / (N_DIRS - 1)) for i in range(N_DIRS)][::-1]  # Reverse for better visibility
-DIR_LABELS = ['dir1', 'dir2', 'dir3', 'dir4', 'dir5', 'dir6']
+CMAP = cm.get_cmap("plasma")
+COLORS = [CMAP(i / (N_DIRS - 1)) for i in range(N_DIRS)][
+    ::-1
+]  # Reverse for better visibility
+DIR_LABELS = ["dir1", "dir2", "dir3", "dir4", "dir5", "dir6"]
+
 
 # ---- Helper: load and average blip pairs for one sequence ----
 def load_sequence(img_dir, seq_name, bvals, n_dirs, te):
@@ -61,24 +64,28 @@ def load_sequence(img_dir, seq_name, bvals, n_dirs, te):
                 print(f"  WARNING: {seq_name} missing b={b} dir={d}")
     return averaged
 
+
 # ---- Helper: build mask from mean b=0 ----
 def build_mask(averaged, n_dirs, thresh_frac):
     b0_imgs = [averaged[(0, d)] for d in range(n_dirs) if (0, d) in averaged]
     if len(b0_imgs) == 0:
         raise ValueError("No b=0 images found for masking")
-    mean_b0   = np.mean(b0_imgs, axis=0)
+    mean_b0 = np.mean(b0_imgs, axis=0)
     threshold = thresh_frac * mean_b0.max()
-    mask      = mean_b0 > threshold
-    print(f"  Mask: {mask.sum()} voxels (thresh={threshold:.2f}, max={mean_b0.max():.2f})")
+    mask = mean_b0 > threshold
+    print(
+        f"  Mask: {mask.sum()} voxels (thresh={threshold:.2f}, max={mean_b0.max():.2f})"
+    )
     return mask
+
 
 # ---- Helper: plot one ADC subplot ----
 def plot_adc(ax, averaged, mask, bvals, n_dirs, colors, dir_labels, seq_name):
     adc_all = []
 
     for d in range(n_dirs):
-        log_means  = []
-        cv_errs    = []
+        log_means = []
+        cv_errs = []
         bvals_used = []
 
         for b in bvals:
@@ -89,7 +96,7 @@ def plot_adc(ax, averaged, mask, bvals, n_dirs, colors, dir_labels, seq_name):
             if len(vox) < 10:
                 continue
             mean_s = np.mean(vox)
-            std_s  = np.std(vox)
+            std_s = np.std(vox)
             log_means.append(np.log(mean_s))
             cv_errs.append(std_s / mean_s)
             bvals_used.append(b)
@@ -99,20 +106,30 @@ def plot_adc(ax, averaged, mask, bvals, n_dirs, colors, dir_labels, seq_name):
             continue
 
         bvals_arr = np.array(bvals_used, dtype=float)
-        log_arr   = np.array(log_means)
-        cv_arr    = np.array(cv_errs)
+        log_arr = np.array(log_means)
+        cv_arr = np.array(cv_errs)
 
         slope, intercept, *_ = stats.linregress(bvals_arr, log_arr)
         adc = -slope
         adc_all.append(adc)
         print(f"  {seq_name} dir{d}: ADC = {adc:.2e} mm2/s")
 
-        c   = colors[d]
+        c = colors[d]
         lbl = dir_labels[d]
 
-        ax.errorbar(bvals_arr, log_arr, yerr=cv_arr,
-                    fmt='o', color=c, markersize=4, capsize=3,
-                    elinewidth=1, markeredgewidth=0, label=lbl, zorder=3)
+        ax.errorbar(
+            bvals_arr,
+            log_arr,
+            yerr=cv_arr,
+            fmt="o",
+            color=c,
+            markersize=4,
+            capsize=3,
+            elinewidth=1,
+            markeredgewidth=0,
+            label=lbl,
+            zorder=3,
+        )
 
         b_fit = np.linspace(0, max(bvals), 300)
         ax.plot(b_fit, intercept + slope * b_fit, color=c, linewidth=1.5, zorder=2)
@@ -124,36 +141,50 @@ def plot_adc(ax, averaged, mask, bvals, n_dirs, colors, dir_labels, seq_name):
         #         transform=ax.transAxes, color='black', fontsize=9)
 
     ax.set_xlim(-20, max(bvals) + 50)
-    ax.set_xlabel("b-value (s/mm²)", color='black', fontsize=10)
-    ax.set_ylabel("log(S)", color='black', fontsize=10)
-    ax.tick_params(colors='black')
+    ax.set_xlabel("b-value (s/mm²)", color="black", fontsize=10)
+    ax.set_ylabel("log(S)", color="black", fontsize=10)
+    ax.tick_params(colors="black")
     for spine in ax.spines.values():
-        spine.set_edgecolor('black')
-    ax.set_facecolor('white')
+        spine.set_edgecolor("black")
+    ax.set_facecolor("white")
+
 
 # ---- Main ----
 fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-fig.patch.set_facecolor('white')
-fig.suptitle("ADC Estimation", fontsize=14, fontweight='bold', color='black')
+fig.patch.set_facecolor("white")
+fig.suptitle("ADC Estimation", fontsize=14, fontweight="bold", color="black")
 
 for ax, seq, title in zip(axes, SEQUENCES, SEQ_TITLES):
     print(f"\nLoading {seq}...")
     averaged = load_sequence(IMG_DIR, seq, BVALS, N_DIRS, TE)
     if averaged is None:
-        ax.text(0.5, 0.5, f"No data\nfor {seq}",
-                ha='center', va='center', transform=ax.transAxes, color='black')
-        ax.set_title(title, color='black', fontsize=11, fontweight='bold')
+        ax.text(
+            0.5,
+            0.5,
+            f"No data\nfor {seq}",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            color="black",
+        )
+        ax.set_title(title, color="black", fontsize=11, fontweight="bold")
         continue
 
     mask = build_mask(averaged, N_DIRS, MASK_THRESH_FRAC)
     plot_adc(ax, averaged, mask, BVALS, N_DIRS, COLORS, DIR_LABELS, seq)
-    ax.set_title(title, color='black', fontsize=11, fontweight='bold')
-    ax.legend(fontsize=8, facecolor='white', labelcolor='black',
-              framealpha=1.0, edgecolor='black', loc='upper right')
+    ax.set_title(title, color="black", fontsize=11, fontweight="bold")
+    ax.legend(
+        fontsize=8,
+        facecolor="white",
+        labelcolor="black",
+        framealpha=1.0,
+        edgecolor="black",
+        loc="upper right",
+    )
 
 plt.tight_layout()
 plt.show()
 
-plt.savefig(OUTPUT_PATH, dpi=250, facecolor='white')
+plt.savefig(OUTPUT_PATH, dpi=250, facecolor="white")
 print(f"\nSaved: {OUTPUT_PATH}")
 # %%
