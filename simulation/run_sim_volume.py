@@ -158,7 +158,7 @@ def _flush_variant_volumes(
             )
         weighted_vols = vol[variant_key].get("weighted_vols", {})
         if weighted_vols:
-            output_dir = paths.t2_vol_dir if pipeline_name.startswith("t2_") else paths.adc_vol_dir
+            output_dir = paths.t2_vol_dir if pipeline_name.startswith("t2_") else paths.diff_vol_dir
             for stem, weighted_volume in weighted_vols.items():
                 out_fname = f"{paths.phantom_name}-{stem}.nii.gz"
                 _save_volume_nifti(
@@ -542,7 +542,7 @@ if __name__ == "__main__":
         diff_img_dir  = os.path.join(project_root, "simulation", "simulated", "diff_img"),
         t2_img_dir    = os.path.join(project_root, "simulation", "simulated", "t2_img"),
         t2_vol_dir    = os.path.join(project_root, "simulation", "simulated", "t2_vol"),
-        adc_vol_dir   = os.path.join(project_root, "simulation", "simulated", "adc_vol"),
+        diff_vol_dir   = os.path.join(project_root, "simulation", "simulated", "diff_vol"),
     )
 
     # pipelines = ("adc_multishot", "t2_multishot",)
@@ -565,9 +565,10 @@ if __name__ == "__main__":
     results = run_all_qmri_simulations_volume(
         paths,
         TE1_values_triple=range(65, 125, 5),   # (3 per TR)
-        b_values=range(0, 1000, 1000),      # fewer b-values to speed up testing
-        b_directions=1,                    # fewer directions to speed up testing
+        b_values=range(0, 2000, 100),      # fewer b-values to speed up testing
+        b_directions=3,                    # fewer directions to speed up testing
         pipelines=("t2_triple", "adc_triple"),   # remove kwarg to run all 6 pipelines
+        alternating_blip_polarity=False,       # test the new alternating blip polarity feature
     )
 
     print(results.keys())

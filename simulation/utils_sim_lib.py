@@ -74,7 +74,7 @@ class PathConfig:
         Output directories for .seq files, .npy maps and tissue masks.
     diff_img_dir, t2_img_dir:
         Output directories for per-echo magnitude NIfTI images.
-    t2_vol_dir, adc_vol_dir:
+    t2_vol_dir, diff_vol_dir:
         Output directories for 3D (Ny, Nx, n_slices) weighted-image
         volumes — one NIfTI per echo / b-value / direction / blip variant,
         used as FSL topup input.
@@ -89,7 +89,7 @@ class PathConfig:
     diff_img_dir: str
     t2_img_dir: str
     t2_vol_dir: str = ""
-    adc_vol_dir: str = ""
+    diff_vol_dir: str = ""
 
     def ensure_dirs(self) -> None:
         """Create every output directory listed on this config (idempotent)."""
@@ -100,7 +100,7 @@ class PathConfig:
             self.diff_img_dir,
             self.t2_img_dir,
             self.t2_vol_dir,
-            self.adc_vol_dir,
+            self.diff_vol_dir,
         ):
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)

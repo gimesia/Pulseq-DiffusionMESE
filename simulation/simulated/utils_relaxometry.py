@@ -201,7 +201,7 @@ def t2_nlls(
     data,
     te_list,
     mask_threshold_frac=0.1,
-    t2_bounds=(0.0, 3.0),
+    t2_bounds=(0.0, 3),
     init=None,
     maxfev=200,
 ):
