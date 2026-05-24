@@ -7,7 +7,6 @@ brainweb_phantoms/*
 simulation/phantoms/brainweb/*
 simulation/simulated/brainmaps/*
 simulation/simulated/masks/*
-simulation/simulated/adc_vol
 simulation/simulated/diff_img/*
 simulation/simulated/t2_vol
 simulation/simulated/t2_img/*
@@ -16,7 +15,8 @@ simulation/simulated/topupADC/*
 simulation/simulated/topupT2/*
 simulation/simulated/figs/*
 simulation/simulated/volumes/*
-
+simulation/simulated/diff_vol/*
+simulation/simulated/topup_results (FIELDMAPS)
 # =======================================================================================
 # FROM TEMPLATE
 # =======================================================================================
