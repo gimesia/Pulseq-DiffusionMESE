@@ -274,7 +274,6 @@ def run_all_qmri_simulations_volume(
 
     Ny = Nx = round(fov * 1e3 / res)
     n_slices_total = len(slice_indices)
-
     # Variant table: (pipeline, suffix, blip_down). EPI pipelines run twice
     # (blip-down then blip-up); multishot runs once (blip_down is ignored).
     variant_keys: list[tuple[str, str, bool]] = []
@@ -561,13 +560,13 @@ if __name__ == "__main__":
     #     save_volume_nifti=True,
     # )
 
-    pipelines = ("adc_triple", "t2_triple",)
+    pipelines = ("adc_triple", )#"adc_triple",)
     results = run_all_qmri_simulations_volume(
         paths,
         TE1_values_triple=range(65, 125, 5),   # (3 per TR)
         b_values=range(0, 2000, 100),      # fewer b-values to speed up testing
         b_directions=3,                    # fewer directions to speed up testing
-        pipelines=("t2_triple", "adc_triple"),   # remove kwarg to run all 6 pipelines
+        pipelines=pipelines,   # remove kwarg to run all 6 pipelines
         alternating_blip_polarity=False,       # test the new alternating blip polarity feature
     )
 

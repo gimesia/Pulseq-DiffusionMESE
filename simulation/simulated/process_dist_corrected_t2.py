@@ -63,6 +63,12 @@ t2_blipup_corrected_paths = sorted(
 
 TEs = get_TEs(t2_blipup_paths)
 print(f"Echo times (TEs) extracted: {TEs}")
+
+# Subject prefix: everything before "_TE{n}_" in the first input filename
+_subj_match = re.match(r"^(.*?)_TE\d+_", os.path.basename(t2_blipup_paths[0]))
+subject = _subj_match.group(1) if _subj_match else "subject"
+print(f"Subject: {subject}")
+
 print(
     f"Found {len(t2_blipup_paths)} blipup and {len(t2_blipdown_paths)} blipdown files."
 )
@@ -139,7 +145,7 @@ print(f"Blipup T2 map shape: {t2_blipup_map.shape}")
 t2_blipup_map_transposed = np.transpose(t2_blipup_map, (2, 1, 0))
 
 bu_out = nib.Nifti1Image(np.asarray(t2_blipup_map_transposed), affine)
-nib.save(bu_out, os.path.join(".", "t2_blipup_map.nii.gz"))
+nib.save(bu_out, os.path.join(file_dir, f"{subject}_t2_blipup_map.nii.gz"))
 
 # ================================
 t2_blipdown_map = []
@@ -161,7 +167,7 @@ print(f"Blipdown T2 map shape: {t2_blipdown_map.shape}")
 
 t2_blipdown_map_transposed = np.transpose(t2_blipdown_map, (2, 1, 0))
 bd_out = nib.Nifti1Image(np.asarray(t2_blipdown_map_transposed), affine)
-nib.save(bd_out, os.path.join(".", "t2_blipdown_map.nii.gz"))
+nib.save(bd_out, os.path.join(file_dir, f"{subject}_t2_blipdown_map.nii.gz"))
 
 # %%==============================
 t2_blipdown_map_corrected = []
@@ -183,7 +189,7 @@ print(f"Corrected blipdown T2 map shape: {t2_blipdown_map_corrected.shape}")
 
 t2_blipdown_map_corrected_transposed = np.transpose(t2_blipdown_map_corrected, (2, 1, 0))
 bd_out_corrected = nib.Nifti1Image(np.asarray(t2_blipdown_map_corrected_transposed), affine)
-nib.save(bd_out_corrected, os.path.join(".", "t2_blipdown_map_corrected.nii.gz"))
+nib.save(bd_out_corrected, os.path.join(file_dir, f"{subject}_t2_blipdown_map_corrected.nii.gz"))
 
 # =================================
 t2_blipup_map_corrected = []
@@ -205,7 +211,7 @@ print(f"Corrected blipup T2 map shape: {t2_blipup_map_corrected.shape}")
 
 t2_blipup_map_corrected_transposed = np.transpose(t2_blipup_map_corrected, (2, 1, 0))
 bu_out_corrected = nib.Nifti1Image(np.asarray(t2_blipup_map_corrected_transposed), affine)
-nib.save(bu_out_corrected, os.path.join(".", "t2_blipup_map_corrected.nii.gz"))
+nib.save(bu_out_corrected, os.path.join(file_dir, f"{subject}_t2_blipup_map_corrected.nii.gz"))
 
 # %%===============================
 # Save Output
@@ -219,9 +225,9 @@ bd_out = nib.Nifti1Image(t2_blipdown_map_rot, affine)
 bu_out = nib.Nifti1Image(t2_blipup_map_rot, affine)
 bd_out_corrected = nib.Nifti1Image(t2_blipdown_map_corrected_rot, affine)
 bu_out_corrected = nib.Nifti1Image(t2_blipup_map_corrected_rot, affine)
-nib.save(bu_out, os.path.join(".", "t2_blipup_map.nii.gz"))
-nib.save(bd_out, os.path.join(".", "t2_blipdown_map.nii.gz"))
-nib.save(bu_out_corrected, os.path.join(".", "t2_blipup_map_corrected.nii.gz"))
-nib.save(bd_out_corrected, os.path.join(".", "t2_blipdown_map_corrected.nii.gz"))
+nib.save(bu_out, os.path.join(file_dir, f"{subject}_t2_blipup_map.nii.gz"))
+nib.save(bd_out, os.path.join(file_dir, f"{subject}_t2_blipdown_map.nii.gz"))
+nib.save(bu_out_corrected, os.path.join(file_dir, f"{subject}_t2_blipup_map_corrected.nii.gz"))
+nib.save(bd_out_corrected, os.path.join(file_dir, f"{subject}_t2_blipdown_map_corrected.nii.gz"))
 
 

@@ -9,6 +9,9 @@ import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
 
+filepath = os.path.dirname(os.path.abspath(__file__))
+corrected_dir = os.path.join(filepath, "volumes_corrected")
+
 SUBJECT_ID = 0
 subjects = np.unique(
     [f.split("-")[1] for f in os.listdir("volumes/") if f.startswith("brainweb-subj")]
@@ -62,22 +65,28 @@ t2Ref = load_nii(f"volumes/brainweb-{subject}-T2_ref_volume.nii.gz")
 t2multishot_se = load_nii(
     f"volumes/brainweb-{subject}-T2_NLLS_t2_multishot_volume.nii.gz"
 )
+t2MESE_blipup_corrected = load_nii(fr"{corrected_dir}/t2_blipup_map_corrected.nii.gz")
+t2MESE_blipdown_corrected = load_nii(fr"{corrected_dir}/t2_blipdown_map_corrected.nii.gz")
 
 ims = [
     t2SSE_blipup,
     t2SSE_blipdown,
     t2MESE_blipup,
     t2MESE_blipdown,
-    t2multishot_se,
-    t2Ref,
+    # t2multishot_se,
+    # t2Ref,
+    t2MESE_blipup_corrected,
+    t2MESE_blipdown_corrected
 ]
 titles = [
     "T2 SSE Blip-Up",
     "T2 SSE Blip-Down",
     "T2 MESE Blip-Up",
     "T2 MESE Blip-Down",
-    "T2 Multishot SE",
-    "T2 Reference",
+    # "T2 Multishot SE",
+    # "T2 Reference",
+    "T2 MESE Blip-Up Corrected",
+    "T2 MESE Blip-Down Corrected"
 ]
 
 n_images = len(ims)
@@ -128,6 +137,12 @@ if REGISTER:
     t2multishot_se_reg = _reg(
         f"volumes/brainweb-{subject}-T2_NLLS_t2_multishot_volume.nii.gz"
     )
+    t2MESE_blipup_corrected_reg = _reg(
+        fr"{corrected_dir}/t2_blipup_map_corrected.nii.gz"
+    )
+    t2MESE_blipdown_corrected_reg = _reg(
+        fr"{corrected_dir}/t2_blipdown_map_corrected.nii.gz"
+    )
     print("Registration complete.")
 else:
     t2SSE_blipup_reg = np.squeeze(t2SSE_blipup)
@@ -135,6 +150,8 @@ else:
     t2MESE_blipup_reg = np.squeeze(t2MESE_blipup)
     t2MESE_blipdown_reg = np.squeeze(t2MESE_blipdown)
     t2multishot_se_reg = np.squeeze(t2multishot_se)
+    t2MESE_blipup_corrected_reg = np.squeeze(t2MESE_blipup_corrected)
+    t2MESE_blipdown_corrected_reg = np.squeeze(t2MESE_blipdown_corrected)
     print("Registration skipped — using raw images.")
 
 fig.savefig("t2_comparison_matrix.png", dpi=300, bbox_inches="tight")
@@ -157,6 +174,13 @@ pairs = [
         "T2 SSE Blip-Down (registered)",
         "T2 MESE Blip-Down (registered)",
         "Difference Blip-Down",
+    ),
+    (
+        t2MESE_blipup_corrected_reg,
+        t2MESE_blipdown_corrected_reg,
+        "T2 MESE Blip-Up Corrected (registered)",
+        "T2 MESE Blip-Down Corrected (registered)",
+        "Difference Blip-Up vs Blip-Down (Corrected)",
     ),
     (
         t2multishot_se_reg,
@@ -189,19 +213,23 @@ plt.tight_layout()
 # =================================================================================
 refs = [
     t2Ref_reg,
-    t2multishot_se_reg,
+    # t2multishot_se_reg,
     t2SSE_blipup_reg,
     t2SSE_blipdown_reg,
     t2MESE_blipup_reg,
     t2MESE_blipdown_reg,
+    t2MESE_blipup_corrected_reg,
+    t2MESE_blipdown_corrected_reg,
 ]
 ref_names = [
     "Reference",
-    "Multishot SE",
+    # "Multishot SE",
     "SSE EPI blip-up",
     "SSE EPI blip-down",
     "MSE EPI blip-up",
     "MSE EPI blip-down",
+    "MSE EPI blip-up (Corrected)",
+    "MSE EPI blip-down (Corrected)",
 ]
 size = len(refs)
 
@@ -279,10 +307,13 @@ plt.show()
 # %% ==============================================================================
 #   Per-tissue MAE (WM / GM / CSF)
 # =================================================================================
-tissue_masks_arr = np.load(
-    f"masks/brainweb-{subject}-tissue_masks.npy"
-)  # (3, H, W) — WM, GM, CSF
-tissue_masks_arr = tissue_masks_arr  # np.rot90(tissue_masks_arr, k=1, axes=(1, 2))
+tissue_mask_wm = load_nii(f"masks/brainweb-{subject}-mask_wm_volume.nii.gz")
+tissue_mask_gm = load_nii(f"masks/brainweb-{subject}-mask_gm_volume.nii.gz")
+tissue_mask_csf = load_nii(f"masks/brainweb-{subject}-mask_csf_volume.nii.gz")
+
+
+tissue_masks_arr = np.stack([tissue_mask_wm, tissue_mask_gm, tissue_mask_csf], axis=0)  # (3, H, W) — WM, GM, CSF
+tissue_masks_arr = tissue_masks_arr.astype(np.float32)
 tissue_names_masks = ["WM", "GM", "CSF"]
 
 # Plot center tissue mask for each tissue
@@ -293,8 +324,7 @@ for t, name in enumerate(tissue_names_masks):
     mask = tissue_masks_arr[t]
     # if mask is 3D, pick central slice; otherwise assume 2D
     if mask.ndim == 3:
-        z = mask.shape[0] // 2
-        disp = mask[z]
+        disp = get_slice(mask)
     else:
         disp = mask
     ax = axs_masks[t] if len(tissue_names_masks) > 1 else axs_masks
@@ -304,7 +334,7 @@ for t, name in enumerate(tissue_names_masks):
 plt.tight_layout()
 plt.show()
 
-
+#%%
 def mae_tissue(im1, im2, mask):
     im1 = np.squeeze(im1)
     im2 = np.squeeze(im2)
@@ -313,7 +343,9 @@ def mae_tissue(im1, im2, mask):
         im1 = get_slice(im1)
     if im2.ndim == 3:
         im2 = get_slice(im2)
-    valid = mask & (im1 > 0) & (im2 > 0)
+    if mask.ndim == 3:
+        mask = get_slice(mask)
+    valid = (mask > 0) & (im1 > 0) & (im2 > 0)
     if valid.sum() == 0:
         return float("nan")
     return np.mean(np.abs(im1[valid] - im2[valid]))
@@ -344,6 +376,7 @@ for i in range(n):
             + "".join(f"{mae_matrices[t, i, j]:>{col_w}.4f}" for t in range(n_tissues))
         )
 
+#%%
 fig, axes = plt.subplots(1, n_tissues, figsize=(7 * n_tissues, 6))
 for t, (ax_t, tissue) in enumerate(zip(axes, tissue_names_masks)):
     mat = mae_matrices[t]
@@ -377,7 +410,9 @@ plt.show()
 
 for t, tissue in enumerate(tissue_names_masks):
     mask = tissue_masks_arr[t]
-    refs_masked = [np.where(mask, get_slice(np.squeeze(r)), -1) for r in refs]
+    if mask.ndim == 3:
+        mask = get_slice(mask)
+    refs_masked = [np.where(mask > 0, get_slice(np.squeeze(r)), -1) for r in refs]
 
     fig_g, ax_g = plt.subplots(n + 1, n + 1, figsize=(5 * (n + 1), 5 * (n + 1)))
     fig_g.suptitle(f"All-pairs comparison — {tissue}", fontsize=14)
@@ -402,7 +437,8 @@ for t, tissue in enumerate(tissue_names_masks):
                 fontsize=7,
             )
     plt.tight_layout()
-    plt.show()
+tissue_mask_wm = load_nii(f"masks/brainweb-{subject}-mask_wm_volume.nii.gz")[1]
+plt.show()
 
 # %% ==============================================================================
 #   MAE vs Reference per tissue — SSE, MSE, Multishot SE
@@ -411,6 +447,7 @@ methods = {
     "Multishot SE": (t2multishot_se_reg, None),
     "SSE EPI": (t2SSE_blipup_reg, t2SSE_blipdown_reg),
     "MSE EPI": (t2MESE_blipup_reg, t2MESE_blipdown_reg),
+    "MSE EPI Corrected": (t2MESE_blipup_corrected_reg, t2MESE_blipdown_corrected_reg),
 }
 
 mae_per_method = {}
@@ -461,7 +498,9 @@ def mean_tissue(img, mask):
     img = np.squeeze(img)
     if img.ndim == 3:
         img = get_slice(img)
-    valid = mask & (img > 0)
+    if mask.ndim == 3:
+        mask = get_slice(mask)
+    valid = (mask > 0) & (img > 0)
     if valid.sum() == 0:
         return float("nan")
     return np.mean(img[valid])
@@ -472,6 +511,7 @@ all_acqs = {
     "Multishot SE": (t2multishot_se_reg, None),
     "SSE EPI": (t2SSE_blipup_reg, t2SSE_blipdown_reg),
     "MSE EPI": (t2MESE_blipup_reg, t2MESE_blipdown_reg),
+    "MSE EPI Corrected": (t2MESE_blipup_corrected_reg, t2MESE_blipdown_corrected_reg),
 }
 
 mean_per_acq = {}
@@ -513,6 +553,200 @@ ax_mean.set_title(
     "Mean T2 per tissue by acquisition\n(SSE / MSE averaged over blip-up and blip-down)"
 )
 ax_mean.legend()
+plt.tight_layout()
+plt.show()
+
+# %%
+# %% ==============================================================================
+#   Reference comparison — per-tissue MAE + binary shape difference
+# =================================================================================
+blipdown_methods = {
+    "SSE EPI blip-down": t2SSE_blipdown_reg,
+    "MSE EPI blip-down": t2MESE_blipdown_reg,
+    "MSE EPI blip-down (Corr.)": t2MESE_blipdown_corrected_reg,
+}
+
+blipup_methods = {
+    "SSE EPI blip-up": t2SSE_blipup_reg,
+    "MSE EPI blip-up": t2MESE_blipup_reg,
+    "MSE EPI blip-up (Corr.)": t2MESE_blipup_corrected_reg,
+}
+# ===========================================================
+# Blip-up
+# ===========================================================
+# ---- Per-tissue MAE vs Reference -------------------------------------------------
+mae_blipdown = {
+    name: [mae_tissue(img, t2Ref_reg, tissue_masks_arr[t]) * 1000 for t in range(n_tissues)]
+    for name, img in blipdown_methods.items()
+}
+
+x = np.arange(n_tissues)
+n_bd = len(mae_blipdown)
+width_bd = 0.6 / n_bd
+offsets_bd = np.arange(n_bd) * width_bd - (n_bd - 1) * width_bd / 2
+colors_bd = plt.get_cmap("plasma")(np.linspace(0, 1, n_bd))
+
+fig, ax_bd = plt.subplots(figsize=(8, 5))
+for idx, (name, vals) in enumerate(mae_blipdown.items()):
+    bars = ax_bd.bar(x + offsets_bd[idx], vals, width_bd, label=name, color=colors_bd[idx])
+    for bar, v in zip(bars, vals):
+        ax_bd.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{v:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
+ax_bd.set_xticks(x)
+ax_bd.set_xticklabels(tissue_names_masks)
+ax_bd.set_ylabel("MAE (ms)")
+ax_bd.set_title("Blip-down T2 MAE per tissue vs Reference")
+ax_bd.legend()
+plt.tight_layout()
+plt.show()
+
+# ---- Binary shape + intensity difference vs Reference ----------------------------
+def binarize(img):
+    return get_slice(np.squeeze(img)) > 0
+
+def dice(mask_a, mask_b):
+    inter = np.logical_and(mask_a, mask_b).sum()
+    denom = mask_a.sum() + mask_b.sum()
+    return 2.0 * inter / denom if denom > 0 else float("nan")
+
+ref_mask = binarize(t2Ref_reg)
+ref_slice = get_slice(t2Ref_reg)
+
+from matplotlib.colors import ListedColormap
+diff_cmap = ListedColormap(["#000000", "#1f9e89", "#fde725"])  # bg, ref-only, method-only
+
+fig, ax_sh = plt.subplots(len(blipdown_methods), 4, figsize=(20, 5 * len(blipdown_methods)))
+if len(blipdown_methods) == 1:
+    ax_sh = ax_sh[np.newaxis, :]
+
+for i, (name, img) in enumerate(blipdown_methods.items()):
+    m_mask = binarize(img)
+    m_slice = get_slice(np.squeeze(img))
+
+    # shape diff: 0=agreement, 1=reference only, 2=method only
+    diff_label = np.zeros_like(m_mask, dtype=np.uint8)
+    diff_label[ref_mask & ~m_mask] = 1
+    diff_label[m_mask & ~ref_mask] = 2
+
+    # intensity diff (ms), only where both have signal
+    valid = ref_mask & m_mask
+    intensity_diff = np.where(valid, np.abs(m_slice - ref_slice), 0.0) * 1000
+    mae_value = mae(img, t2Ref_reg, non_zero=True) * 1000
+
+    d = dice(m_mask, ref_mask)
+    n_disagree = int((diff_label > 0).sum())
+
+    ax_sh[i, 0].imshow(m_mask, cmap="gray")
+    ax_sh[i, 0].set_title(f"{name}\n(binary mask)")
+
+    ax_sh[i, 1].imshow(ref_mask, cmap="gray")
+    ax_sh[i, 1].set_title("Reference\n(binary mask)")
+
+    ax_sh[i, 2].imshow(diff_label, cmap=diff_cmap, vmin=0, vmax=2)
+    ax_sh[i, 2].set_title(
+        f"Shape diff\nDice={d:.4f}, disagree={n_disagree} px\n"
+        "yellow = method only, teal = reference only"
+    )
+
+    im_int = ax_sh[i, 3].imshow(intensity_diff, cmap="plasma")
+    ax_sh[i, 3].set_title(f"Intensity diff |method - ref|\nMAE={mae_value:.4f} ms")
+    fig.colorbar(im_int, ax=ax_sh[i, 3], fraction=0.046, pad=0.04)
+
+    for j in range(4):
+        ax_sh[i, j].axis("off")
+
+plt.tight_layout()
+plt.show()
+
+
+# ===========================================================
+# Blip-up
+# ===========================================================
+# ---- Per-tissue MAE vs Reference -------------------------------------------------
+mae_blipup = {
+    name: [mae_tissue(img, t2Ref_reg, tissue_masks_arr[t]) * 1000 for t in range(n_tissues)]
+    for name, img in blipup_methods.items()
+}
+
+x = np.arange(n_tissues)
+n_bd = len(mae_blipup)
+width_bd = 0.6 / n_bd
+offsets_bd = np.arange(n_bd) * width_bd - (n_bd - 1) * width_bd / 2
+colors_bd = plt.get_cmap("plasma")(np.linspace(0, 1, n_bd))
+
+fig, ax_bd = plt.subplots(figsize=(8, 5))
+for idx, (name, vals) in enumerate(mae_blipup.items()):
+    bars = ax_bd.bar(x + offsets_bd[idx], vals, width_bd, label=name, color=colors_bd[idx])
+    for bar, v in zip(bars, vals):
+        ax_bd.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{v:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
+ax_bd.set_xticks(x)
+ax_bd.set_xticklabels(tissue_names_masks)
+ax_bd.set_ylabel("MAE (ms)")
+ax_bd.set_title("Blip-up T2 MAE per tissue vs Reference")
+ax_bd.legend()
+plt.tight_layout()
+plt.show()
+
+# ---- Binary shape + intensity difference vs Reference ----------------------------
+ref_mask = binarize(t2Ref_reg)
+ref_slice = get_slice(t2Ref_reg)
+
+from matplotlib.colors import ListedColormap
+diff_cmap = ListedColormap(["#000000", "#1f9e89", "#fde725"])  # bg, ref-only, method-only
+
+fig, ax_sh = plt.subplots(len(blipup_methods), 4, figsize=(20, 5 * len(blipup_methods)))
+if len(blipup_methods) == 1:
+    ax_sh = ax_sh[np.newaxis, :]
+
+for i, (name, img) in enumerate(blipup_methods.items()):
+    m_mask = binarize(img)
+    m_slice = get_slice(np.squeeze(img))
+
+    # shape diff: 0=agreement, 1=reference only, 2=method only
+    diff_label = np.zeros_like(m_mask, dtype=np.uint8)
+    diff_label[ref_mask & ~m_mask] = 1
+    diff_label[m_mask & ~ref_mask] = 2
+
+    # intensity diff (ms), only where both have signal
+    valid = ref_mask & m_mask
+    intensity_diff = np.where(valid, np.abs(m_slice - ref_slice), 0.0) * 1000
+    mae_value = mae(img, t2Ref_reg, non_zero=True) * 1000
+
+    d = dice(m_mask, ref_mask)
+    n_disagree = int((diff_label > 0).sum())
+
+    ax_sh[i, 0].imshow(m_mask, cmap="gray")
+    ax_sh[i, 0].set_title(f"{name}\n(binary mask)")
+
+    ax_sh[i, 1].imshow(ref_mask, cmap="gray")
+    ax_sh[i, 1].set_title("Reference\n(binary mask)")
+
+    ax_sh[i, 2].imshow(diff_label, cmap="plasma")
+    ax_sh[i, 2].set_title(
+        f"Shape diff\nDice={d:.4f}, disagree={n_disagree} px\n"
+        "yellow = method only, teal = reference only"
+    )
+
+    im_int = ax_sh[i, 3].imshow(intensity_diff, cmap="plasma", vmax=2000)
+    ax_sh[i, 3].set_title(f"Intensity diff |method - ref|\nMAE={mae_value:.4f} ms")
+    fig.colorbar(im_int, ax=ax_sh[i, 3], fraction=0.046, pad=0.04)
+
+    for j in range(4):
+        ax_sh[i, j].axis("off")
+
 plt.tight_layout()
 plt.show()
 

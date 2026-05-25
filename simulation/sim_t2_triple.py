@@ -207,7 +207,7 @@ def run_t2_triple(
 
     order = np.argsort(all_echo_tes)
     images_stack = np.array(all_echo_images)[order]
-    te_sorted = np.array(all_echo_tes)[order]
+    te_sorted = np.array(all_echo_tes)[order] / 1000.0 # convert to seconds for T2 fitting
 
     # Stems may collide when TE2/TE3 (auto-computed) round to the same ms
     # across different TE1 values — disambiguate with a sequential suffix.
@@ -221,7 +221,7 @@ def run_t2_triple(
         weighted_images[stem] = images_stack[i]
 
     t2_nlls, _ = create_t2_map(images_stack, te_sorted, method="nlls")
-    t2_nlls_oriented = t2_nlls / 1000.0
+    t2_nlls_oriented = t2_nlls 
     if save_slice_npy:
         out_path = os.path.join(
             paths.volumes_dir, f"{paths.phantom_name}-T2_MSE_{blip_tag}.nii.gz"
