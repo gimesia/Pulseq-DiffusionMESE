@@ -1,6 +1,6 @@
 *.seq
 *.npy
-.nii.gz
+*.nii.gz
 
 brainweb_phantoms/*
 
@@ -16,7 +16,7 @@ simulation/simulated/topupT2/*
 simulation/simulated/figs/*
 simulation/simulated/volumes/*
 simulation/simulated/diff_vol/*
-simulation/simulated/topup_results (FIELDMAPS)
+simulation/simulated/topup_results (FIELDMAPS)/*.gz
 # =======================================================================================
 # FROM TEMPLATE
 # =======================================================================================

@@ -1,0 +1,180 @@
+#!/bin/bash
+set -e  # stop on any error
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+WIN_SRC="/mnt/c/Users/User/OneDrive/PhD/Sumbission/ESMRMB26/Pulseq-DiffusionMESE/simulation/simulated/t2_vol"
+WORK=~/topup_work/t2_vol
+RES_DIR="/mnt/c/Users/User/Desktop/topup_results/readoutTE1_same"
+mkdir -p "$WORK"
+cd "$WORK"
+
+# ── Copy inputs ───────────────────────────────────────────────────────────────
+echo "=== COPYING INPUTS ==="
+cp "$WIN_SRC"/brainweb-subj04-T2w_TE65_blipdown.nii.gz  .
+cp "$WIN_SRC"/brainweb-subj04-T2w_TE123_blipdown.nii.gz .
+cp "$WIN_SRC"/brainweb-subj04-T2w_TE181_blipdown.nii.gz .
+cp "$WIN_SRC"/brainweb-subj04-T2w_TE65_blipup.nii.gz    .
+cp "$WIN_SRC"/brainweb-subj04-T2w_TE123_blipup.nii.gz   .
+cp "$WIN_SRC"/brainweb-subj04-T2w_TE181_blipup.nii.gz   .
+
+# ── Verify dims and check for issues ─────────────────────────────────────────
+echo ""
+echo "=== IMAGE DIMS ==="
+for f in *.nii.gz; do
+    echo -n "$f: "
+    fslinfo "$f" | grep -E "^dim[1-3]" | tr '\n' ' '
+    echo
+done
+
+echo ""
+echo "=== CHECKING FOR ODD DIMS (should print nothing) ==="
+for f in *.nii.gz; do
+    fslinfo "$f" | grep -E "^dim[1-3]" | \
+        awk -v f="$f" '{if ($2 % 2 != 0) print f, $1, $2, "ODD - PROBLEM!"}'
+done
+
+echo ""
+echo "=== CHECKING FOR NaNs (should print nothing) ==="
+for f in *.nii.gz; do
+    python3 -c "
+import nibabel as nib, numpy as np, sys
+d = nib.load('$f').get_fdata()
+n = np.isnan(d).sum()
+if n > 0:
+    print(f'$f: {n} NaNs FOUND - PROBLEM!')
+"
+done
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TRIPLET 1: BLIPDOWN  (TE65↓  TE123↑  TE181↓)
+# ══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo "========================================================"
+echo " TRIPLET 1: BLIPDOWN"
+echo "========================================================"
+
+# or 0.033228
+cat > acqp_blipdown.txt <<EOF
+0 -1 0 0.044460
+0  1 0 0.044460
+0 -1 0 0.044460
+EOF
+echo "=== acqp_blipdown.txt ===" && cat acqp_blipdown.txt
+
+fslmerge -t merged_blipdown.nii.gz \
+    brainweb-subj04-T2w_TE65_blipdown.nii.gz \
+    brainweb-subj04-T2w_TE123_blipdown.nii.gz \
+    brainweb-subj04-T2w_TE181_blipdown.nii.gz
+echo -n "merged_blipdown dims: "
+fslinfo merged_blipdown.nii.gz | grep -E "^dim[1-4]" | tr '\n' ' '; echo
+
+topup \
+    --imain=merged_blipdown.nii.gz \
+    --datain=acqp_blipdown.txt \
+    --config=b02b0.cnf \
+    --out=topup_blipdown \
+    --fout=fieldmap_Hz_blipdown.nii.gz \
+    --iout=merged_blipdown_corrected.nii.gz \
+    --logout=log_topup_blipdown.txt \
+    --verbose
+
+echo "=== FIELDMAP STATS blipdown (mean std min max) ==="
+fslstats fieldmap_Hz_blipdown.nii.gz -M -S -R
+
+applytopup \
+    --imain=brainweb-subj04-T2w_TE65_blipdown.nii.gz \
+    --datain=acqp_blipdown.txt --inindex=1 \
+    --topup=topup_blipdown --method=jac \
+    --out=brainweb-subj04-T2w_TE65_blipdown_corrected.nii.gz
+echo "TE65 blipdown corrected"
+
+applytopup \
+    --imain=brainweb-subj04-T2w_TE123_blipdown.nii.gz \
+    --datain=acqp_blipdown.txt --inindex=2 \
+    --topup=topup_blipdown --method=jac \
+    --out=brainweb-subj04-T2w_TE123_blipdown_corrected.nii.gz
+echo "TE123 blipdown corrected"
+
+applytopup \
+    --imain=brainweb-subj04-T2w_TE181_blipdown.nii.gz \
+    --datain=acqp_blipdown.txt --inindex=3 \
+    --topup=topup_blipdown --method=jac \
+    --out=brainweb-subj04-T2w_TE181_blipdown_corrected.nii.gz
+echo "TE181 blipdown corrected"
+
+echo "=== CORRECTED BLIPDOWN STATS (mean std min max) ==="
+for f in brainweb-subj04-T2w_TE65_blipdown_corrected.nii.gz \
+          brainweb-subj04-T2w_TE123_blipdown_corrected.nii.gz \
+          brainweb-subj04-T2w_TE181_blipdown_corrected.nii.gz; do
+    echo -n "$f: "; fslstats "$f" -M -S -R
+done
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TRIPLET 2: BLIPUP  (TE65↑  TE123↓  TE181↑)
+# ══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo "========================================================"
+echo " TRIPLET 2: BLIPUP"
+echo "========================================================"
+
+# or 0.033228
+cat > acqp_blipup.txt <<EOF
+0  1 0 0.044460
+0 -1 0 0.044460
+0  1 0 0.044460
+EOF
+echo "=== acqp_blipup.txt ===" && cat acqp_blipup.txt
+
+fslmerge -t merged_blipup.nii.gz \
+    brainweb-subj04-T2w_TE65_blipup.nii.gz \
+    brainweb-subj04-T2w_TE123_blipup.nii.gz \
+    brainweb-subj04-T2w_TE181_blipup.nii.gz
+echo -n "merged_blipup dims: "
+fslinfo merged_blipup.nii.gz | grep -E "^dim[1-4]" | tr '\n' ' '; echo
+
+topup \
+    --imain=merged_blipup.nii.gz \
+    --datain=acqp_blipup.txt \
+    --config=b02b0.cnf \
+    --out=topup_blipup \
+    --fout=fieldmap_Hz_blipup.nii.gz \
+    --iout=merged_blipup_corrected.nii.gz \
+    --logout=log_topup_blipup.txt \
+    --verbose
+
+echo "=== FIELDMAP STATS blipup (mean std min max) ==="
+fslstats fieldmap_Hz_blipup.nii.gz -M -S -R
+
+applytopup \
+    --imain=brainweb-subj04-T2w_TE65_blipup.nii.gz \
+    --datain=acqp_blipup.txt --inindex=1 \
+    --topup=topup_blipup --method=jac \
+    --out=brainweb-subj04-T2w_TE65_blipup_corrected.nii.gz
+echo "TE65 blipup corrected"
+
+applytopup \
+    --imain=brainweb-subj04-T2w_TE123_blipup.nii.gz \
+    --datain=acqp_blipup.txt --inindex=2 \
+    --topup=topup_blipup --method=jac \
+    --out=brainweb-subj04-T2w_TE123_blipup_corrected.nii.gz
+echo "TE123 blipup corrected"
+
+applytopup \
+    --imain=brainweb-subj04-T2w_TE181_blipup.nii.gz \
+    --datain=acqp_blipup.txt --inindex=3 \
+    --topup=topup_blipup --method=jac \
+    --out=brainweb-subj04-T2w_TE181_blipup_corrected.nii.gz
+echo "TE181 blipup corrected"
+
+echo "=== CORRECTED BLIPUP STATS (mean std min max) ==="
+for f in brainweb-subj04-T2w_TE65_blipup_corrected.nii.gz \
+          brainweb-subj04-T2w_TE123_blipup_corrected.nii.gz \
+          brainweb-subj04-T2w_TE181_blipup_corrected.nii.gz; do
+    echo -n "$f: "; fslstats "$f" -M -S -R
+done
+
+# ── Copy everything to Windows ────────────────────────────────────────────────
+echo ""
+echo "=== COPYING TO WINDOWS ==="
+cp -r "$WORK" "$RES_DIR"
+echo "Done: $(ls $RES_DIR | wc -l) files copied"

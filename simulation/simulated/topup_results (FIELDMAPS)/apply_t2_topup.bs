@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Batch EPI distortion correction with FSL applytopup (method=jac).
+#
+# Corrects every TE volume in t2_volumes/ INDEPENDENTLY:
+#   *_blipup.nii.gz   -> corrected with the blip-UP topup field
+#   *_blipdown.nii.gz -> corrected with the blip-DOWN topup field
+# Up and down are kept fully separate (no lsr combination).
+#
+# Uses the topup spline coefficients you already estimated
+# (topup_blipup_* and topup_blipdown_* in fieldmaps_different/).
+#
+# Run from ~/topup_work :   bash run_applytopup.sh
+# =============================================================================
+set -euo pipefail
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+WORK=~/topup_work
+cd "$WORK"
+
+TOPUP_DIR="fieldmaps_different"          # where topup_blip*_fieldcoef / _movpar live
+IMG_DIR="t2_volumes"                # TE series to correct
+OUT_DIR="t2_volumes_corrected"      # results
+
+TOPUP_UP="${TOPUP_DIR}/topup_blipup"      # basename: expects _fieldcoef.nii.gz + _movpar.txt
+TOPUP_DOWN="${TOPUP_DIR}/topup_blipdown"
+
+READOUT=0.044460                    # total readout time (s)
+METHOD=jac                          # independent per-image correction
+INTERP=spline                       # applytopup resampling interpolation
+
+mkdir -p "${OUT_DIR}"
+
+# ---- single-row acqp files (one PE line each, so --inindex=1 is unambiguous) -
+# Blip-up  = +PE  ->  "0  1 0 RO"
+# Blip-down= -PE  ->  "0 -1 0 RO"
+ACQP_UP="${OUT_DIR}/_acqp_up_single.txt"
+ACQP_DOWN="${OUT_DIR}/_acqp_down_single.txt"
+printf "0 1 0 %s\n"  "${READOUT}" > "${ACQP_UP}"
+printf "0 -1 0 %s\n" "${READOUT}" > "${ACQP_DOWN}"
+
+# ---- sanity checks ----------------------------------------------------------
+command -v applytopup >/dev/null 2>&1 || { echo "ERROR: FSL applytopup not on PATH. source your FSL setup."; exit 1; }
+for f in "${TOPUP_UP}_fieldcoef.nii.gz" "${TOPUP_UP}_movpar.txt" \
+         "${TOPUP_DOWN}_fieldcoef.nii.gz" "${TOPUP_DOWN}_movpar.txt"; do
+    [[ -f "$f" ]] || { echo "ERROR: missing topup output: $f"; exit 1; }
+done
+
+# ---- helper -----------------------------------------------------------------
+# correct_one <input.nii.gz> <acqp_single> <topup_basename> <suffix>
+correct_one () {
+    local in="$1" acqp="$2" topup="$3" tag="$4"
+    local base; base="$(basename "${in}" .nii.gz)"
+    local out="${OUT_DIR}/${base}_corrected"
+    applytopup \
+        --imain="${in}" \
+        --datain="${acqp}" \
+        --inindex=1 \
+        --topup="${topup}" \
+        --method="${METHOD}" \
+        --interp="${INTERP}" \
+        --out="${out}"
+    echo "  [${tag}] ${base} -> ${out}.nii.gz"
+}
+
+# ---- loop over all TE volumes ----------------------------------------------
+shopt -s nullglob
+ups=( "${IMG_DIR}"/*_blipup.nii.gz )
+[[ ${#ups[@]} -gt 0 ]] || { echo "ERROR: no *_blipup.nii.gz in ${IMG_DIR}"; exit 1; }
+
+echo "Correcting ${#ups[@]} TE pairs (up + down) with method=${METHOD} ..."
+for up in "${ups[@]}"; do
+    down="${up/_blipup.nii.gz/_blipdown.nii.gz}"
+
+    correct_one "${up}"   "${ACQP_UP}"   "${TOPUP_UP}"   "UP  "
+
+    if [[ -f "${down}" ]]; then
+        correct_one "${down}" "${ACQP_DOWN}" "${TOPUP_DOWN}" "DOWN"
+    else
+        echo "  WARNING: no blipdown match for $(basename "${up}"), skipped down."
+    fi
+done
+
+echo "Done. Corrected volumes in ${OUT_DIR}/"
+
+# -----------------------------------------------------------------------------
+# FUTURE SCENARIO (single field corrects both polarities):
+# to correct blip-down images with the blip-UP field instead, change the DOWN
+# call to use ${TOPUP_UP} but KEEP ${ACQP_DOWN} (acqp row must match the image's
+# own polarity; only the field source changes):
+#     correct_one "${down}" "${ACQP_DOWN}" "${TOPUP_UP}" "DOWN-from-UPfield"
+# -----------------------------------------------------------------------------
