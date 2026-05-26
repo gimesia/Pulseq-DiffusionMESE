@@ -34,7 +34,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
-from matplotlib.patches import FancyArrow
+from matplotlib.patches import FancyArrowPatch
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import LinearLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -132,18 +132,19 @@ def dots_row(axes):
 
 
 def big_arrow(fig, x0, x1, y, *, label=None):
-    """Draw an arrow in figure coordinates from (x0,y) to (x1,y)."""
-    ax = fig.add_axes((x0, y - 0.06, x1 - x0, 0.12), frame_on=False)
-    ax.set_xticks([]); ax.set_yticks([])
-    ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-    ax.add_patch(FancyArrow(
-        0.05, 0.5, 0.9, 0.0,
-        width=0.12, length_includes_head=True,
-        head_width=0.45, head_length=0.18,
-        facecolor="white", edgecolor="black", linewidth=1.5,
-    ))
+    """Draw an arrow in figure coordinates from (x0,y) to (x1,y) safely."""
+    # Use FancyArrowPatch attached to the figure to avoid axes distortion
+    arrow = FancyArrowPatch(
+        posA=(x0, y), posB=(x1, y),
+        transform=fig.transFigure,
+        arrowstyle="simple,head_length=15,head_width=15,tail_width=5",
+        facecolor="white", edgecolor="black", linewidth=1.2,
+        zorder=10
+    )
+    fig.add_artist(arrow)
     if label:
-        ax.text(0.5, 1.05, label, ha="center", va="bottom", fontsize=10)
+        fig.text((x0 + x1) / 2, y + 0.03, label, 
+                 ha="center", va="bottom", fontsize=12, fontweight="bold")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -291,11 +292,8 @@ ax_B0m.text(0.5, -0.22, "qMRI maps", transform=ax_B0m.transAxes,
 
 
 #  Arrows connecting workflows
-big_arrow(fig, 0.12, 0.16, 0.50, label="MRzero")
-big_arrow(fig, 0.82, 0.86, 0.50, label="TOPUP + Fit")
-for txt in fig.texts:
-    if txt.get_text() in {"MRzero", "TOPUP + Fit"}:
-        txt.set_fontsize(12)
+# big_arrow(fig, 0.12, 0.16, 0.50, label="MRzero")
+# big_arrow(fig, 0.82, 0.86, 0.50, label="TOPUP + Fit")
 
 out_path = SIM_DIR / "figs" / "pipeline_showcase.png"
 out_path.parent.mkdir(parents=True, exist_ok=True)

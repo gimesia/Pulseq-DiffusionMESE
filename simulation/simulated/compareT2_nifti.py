@@ -65,8 +65,8 @@ t2Ref = load_nii(f"volumes/brainweb-{subject}-T2_ref_volume.nii.gz")
 t2multishot_se = load_nii(
     f"volumes/brainweb-{subject}-T2_NLLS_t2_multishot_volume.nii.gz"
 )
-t2MESE_blipup_corrected = load_nii(fr"{corrected_dir}/t2_blipup_map_corrected.nii.gz")
-t2MESE_blipdown_corrected = load_nii(fr"{corrected_dir}/t2_blipdown_map_corrected.nii.gz")
+t2MESE_blipup_corrected = load_nii(os.path.join(corrected_dir, f"brainweb-{subject}-T2w_t2_blipup_map_corrected.nii.gz"))
+t2MESE_blipdown_corrected = load_nii(os.path.join(corrected_dir, f"brainweb-{subject}-T2w_t2_blipdown_map_corrected.nii.gz"))
 
 ims = [
     t2SSE_blipup,
@@ -138,10 +138,10 @@ if REGISTER:
         f"volumes/brainweb-{subject}-T2_NLLS_t2_multishot_volume.nii.gz"
     )
     t2MESE_blipup_corrected_reg = _reg(
-        fr"{corrected_dir}/t2_blipup_map_corrected.nii.gz"
+        os.path.join(corrected_dir, f"brainweb-{subject}-T2w_t2_blipup_map_corrected.nii.gz")
     )
     t2MESE_blipdown_corrected_reg = _reg(
-        fr"{corrected_dir}/t2_blipdown_map_corrected.nii.gz"
+        os.path.join(corrected_dir, f"brainweb-{subject}-T2w_t2_blipdown_map_corrected.nii.gz")
     )
     print("Registration complete.")
 else:

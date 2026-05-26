@@ -1,355 +1,751 @@
-"""Per-tissue T2 precision under image-domain Rician noise injection.
-
-Loads the already-reconstructed T2-weighted magnitude volumes (one NIfTI per
-TE per blip per variant, saved by ``run_sim_volume.run_all_qmri_simulations_volume``)
-from ``simulation/simulated/t2_vol/``, injects Rician noise N times in the
-image domain, refits T2 with the *same* ``create_t2_map`` used for the
-noise-free maps, and reports per-tissue mean ± SD across realizations.
-
-The noise model is calibrated once per variant from the b=0 / TE1 white-
-matter mean magnitude (a single scalar sigma reused across every TE within
-that variant). See :mod:`utils_noise` for the calibration and injection
-helpers.
-
-Variants
---------
-- ``t2_sse_blipdown``       : single-shot EPI SE  (36 TEs, 65..236 ms)
-- ``t2_triple_blipdown``    : triple SE EPI       (3 echoes per TR1, sorted TE)
-- ``t2_multishot``          : Cartesian multishot SE (no blip tag in stem)
-
-If a variant's files are missing on disk the variant is skipped with a
-warning rather than aborting. Multishot weighted volumes only exist on disk
-after a run_sim_volume run that included the multishot pipeline.
-
-Reference (BrainWeb 3T tissue T2, seconds)
-------------------------------------------
-WM 0.080, GM 0.110, CSF 2.00 — approximate, mainly used to report bias.
-
-Author      : Aron Gimesi <aron.gimesi@tecnico.ulisboa.pt>
-Affiliation : Instituto Superior Técnico | MSCA-DN IQ-BRAIN
-Date        : 2026
-Context     : ESMRMB 2026 — Pulseq DiffusionMESE showcase
-
-Funding acknowledgement (mandatory):
-    IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
-    December 2024–November 2028, Grant Agreement No. 101169519).
-"""
-from __future__ import annotations
-
+# IQ-BRAIN is funded by the European Union (MSCA Doctoral Network,
+# December 2024–November 2028, Grant Agreement No. 101169519).
+# %% ==============================================================================
+#   Imports & data loading
+# =================================================================================
+import glob
 import os
 import re
-import sys
-import time
-from typing import Iterable
 
-import numpy as np
+import matplotlib.pyplot as plt
 import nibabel as nib
+import numpy as np
 
-# Make the ``simulation`` package importable when this script is run as a
-# standalone file from inside ``simulation/simulated/``.
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_SIM_DIR = os.path.dirname(_THIS_DIR)
-if _SIM_DIR not in sys.path:
-    sys.path.insert(0, _SIM_DIR)
+filepath = os.path.dirname(os.path.abspath(__file__))
+noised_dir = os.path.join(filepath, "volumes_noised")
 
-from utils_relaxometry import create_t2_map
-from utils_noise import (
-    PerTissueAccumulator,
-    add_rician_noise,
-    compute_sigma,
-    load_tissue_masks,
-    print_summary_table,
-    reorient_like_weighted_volume,
-    save_volume_nifti,
+SUBJECT_ID = 0
+subjects = np.unique(
+    [f.split("-")[1] for f in os.listdir("volumes/") if f.startswith("brainweb-subj")]
+)
+subject = subjects[SUBJECT_ID]
+print(f"Selected subject: {subject}")
+
+REGISTER = True
+DISPLAY_AXIS = 2  # axis along which to slice for 2D display (0=x, 1=y, 2=z)
+SLICE_IDX = None  # None → middle slice
+
+
+def load_nii(path: str) -> np.ndarray:
+    return nib.load(path).get_fdata().astype(np.float32)
+
+
+def get_slice(
+    arr: np.ndarray, axis: int = DISPLAY_AXIS, idx: int | None = SLICE_IDX
+) -> np.ndarray:
+    arr = np.squeeze(arr)
+    if arr.ndim == 2:
+        return arr
+    if idx is None:
+        idx = arr.shape[axis] // 2
+    return np.take(arr, idx, axis=axis)
+
+
+def mae(im1, im2, non_zero=True) -> float:
+    im1 = np.squeeze(im1)
+    im2 = np.squeeze(im2)
+    if non_zero:
+        non_zero_mask = (im1 > 0) & (im2 > 0)
+        return np.mean(np.abs(im1[non_zero_mask] - im2[non_zero_mask]))
+    else:
+        return np.mean(np.abs(im1 - im2))
+
+
+# Discover the noise stamp from the most recent run in volumes_noised/
+_t2_noise_matches = sorted(
+    glob.glob(os.path.join(noised_dir, f"brainweb-{subject}_T2_blipup_noise_*.nii.gz"))
+)
+if not _t2_noise_matches:
+    raise FileNotFoundError(
+        f"No noisy T2 maps found in {noised_dir}. "
+        "Run process_dist_corrected_t2_noise.py first."
+    )
+_t2_stamp_m = re.search(
+    r"_noise_(SNR\d+_seed\d+_reg\w+)\.nii\.gz$", _t2_noise_matches[-1]
+)
+t2_stamp = _t2_stamp_m.group(1) if _t2_stamp_m else "SNR40_seed420_regON"
+print(f"T2 noise stamp: {t2_stamp}")
+
+# Load noise-injected T2 maps from volumes_noised/.
+# These are fitted T2 maps produced by process_dist_corrected_t2_noise.py —
+# one combined fit from all blipup/blipdown TEs (SSE + MSE) per variant.
+t2_blipup = load_nii(
+    os.path.join(noised_dir, f"brainweb-{subject}_T2_blipup_noise_{t2_stamp}.nii.gz")
+)
+t2_blipdown = load_nii(
+    os.path.join(noised_dir, f"brainweb-{subject}_T2_blipdown_noise_{t2_stamp}.nii.gz")
+)
+t2_blipup_corrected = load_nii(
+    os.path.join(noised_dir, f"brainweb-{subject}_T2_blipup_corrected_noise_{t2_stamp}.nii.gz")
+)
+t2_blipdown_corrected = load_nii(
+    os.path.join(noised_dir, f"brainweb-{subject}_T2_blipdown_corrected_noise_{t2_stamp}.nii.gz")
 )
 
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-SUBJECT       = "subj04"
-PHANTOM_NAME  = f"brainweb-{SUBJECT}"
-# N=100 is the asked-for default in the spec but each create_t2_map slice fit
-# takes several seconds; expect ~hours per variant at N=100. Start at 20 for
-# a quick read; bump to 100 for the publication-grade table.
-N_REAL        = 20
-SNR_TARGETS   = (20.0,)     # iterable: extend e.g. (10., 20., 40.) for a sweep
-BASE_SEED     = 0
-T2_BOUNDS_SEC = (0.0, 3.0)  # passed through to create_t2_map; matches dist-corrected
-
-# Approximate BrainWeb 3T tissue T2 [s] — for bias readout only.
-T2_REFERENCE = {"wm": 0.080, "gm": 0.110, "csf": 2.000}
-
-# SSE uses a fixed pre-declared TE list; everything else in t2_vol/ that is not
-# in this set is triple SE (auto-computed TE2/TE3 produce non-standard values).
-SSE_TES_MS = (
-    65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 123, 128, 133, 138,
-    143, 148, 153, 158, 163, 168, 173, 178, 181, 186, 191, 196, 201, 206, 211,
-    216, 221, 226, 231, 236,
+# Reference and multishot are noise-free ground truth loaded from volumes/.
+t2Ref = load_nii(f"volumes/brainweb-{subject}-T2_ref_volume.nii.gz")
+t2multishot_se = load_nii(
+    f"volumes/brainweb-{subject}-T2_NLLS_t2_multishot_volume.nii.gz"
 )
 
+ims = [
+    t2_blipup,
+    t2_blipdown,
+    t2_blipup_corrected,
+    t2_blipdown_corrected,
+    # t2multishot_se,
+    # t2Ref,
+]
+titles = [
+    "T2 EPI Blip-Up (noise)",
+    "T2 EPI Blip-Down (noise)",
+    "T2 EPI Blip-Up Corrected (noise)",
+    "T2 EPI Blip-Down Corrected (noise)",
+    # "T2 Multishot SE",
+    # "T2 Reference",
+]
 
-# ---------------------------------------------------------------------------
-# File discovery
-# ---------------------------------------------------------------------------
-_TE_RE   = re.compile(r"_TE(\d+)_")
-_ECHO_RE = re.compile(r"_e(\d+)\.nii\.gz$")
+n_images = len(ims)
+n_cols = 2
+n_rows = (n_images + n_cols - 1) // n_cols
+fig, ax = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows))
+ax = ax.flatten()
+for i, (im, title) in enumerate(zip(ims, titles)):
+    ax[i].imshow(get_slice(im), cmap="gray")
+    ax[i].set_title(title)
+    ax[i].axis("off")
+
+for i in range(n_images, len(ax)):
+    ax[i].axis("off")
+
+plt.tight_layout()
 
 
-def _parse_te_ms(filename: str) -> int | None:
-    m = _TE_RE.search(filename)
-    return int(m.group(1)) if m else None
+# %% ==============================================================================
+#   Registration — all T2 images to Reference
+# =================================================================================
+t2Ref_reg = np.squeeze(t2Ref)
+
+if REGISTER:
+    import ants
+
+    _ref_ants = ants.image_read(f"volumes/brainweb-{subject}-T2_ref_volume.nii.gz")
+
+    def _reg(path: str) -> np.ndarray:
+        return ants.registration(
+            _ref_ants,
+            ants.image_read(path),
+            type_of_transform="Rigid",
+        )["warpedmovout"].numpy()
+
+    t2_blipup_reg = _reg(
+        os.path.join(noised_dir, f"brainweb-{subject}_T2_blipup_noise_{t2_stamp}.nii.gz")
+    )
+    t2_blipdown_reg = _reg(
+        os.path.join(noised_dir, f"brainweb-{subject}_T2_blipdown_noise_{t2_stamp}.nii.gz")
+    )
+    t2_blipup_corrected_reg = _reg(
+        os.path.join(noised_dir, f"brainweb-{subject}_T2_blipup_corrected_noise_{t2_stamp}.nii.gz")
+    )
+    t2_blipdown_corrected_reg = _reg(
+        os.path.join(noised_dir, f"brainweb-{subject}_T2_blipdown_corrected_noise_{t2_stamp}.nii.gz")
+    )
+    t2multishot_se_reg = _reg(
+        f"volumes/brainweb-{subject}-T2_NLLS_t2_multishot_volume.nii.gz"
+    )
+    print("Registration complete.")
+else:
+    t2_blipup_reg = np.squeeze(t2_blipup)
+    t2_blipdown_reg = np.squeeze(t2_blipdown)
+    t2_blipup_corrected_reg = np.squeeze(t2_blipup_corrected)
+    t2_blipdown_corrected_reg = np.squeeze(t2_blipdown_corrected)
+    t2multishot_se_reg = np.squeeze(t2multishot_se)
+    print("Registration skipped — using raw images.")
+
+fig.savefig("t2_noise_comparison_matrix.png", dpi=300, bbox_inches="tight")
 
 
-def _list_t2_files(t2_dir: str, variant: str, blip: str = "blipdown") -> list[tuple[int, int, str]]:
-    """Return ``[(te_ms, echo_idx, filename), ...]`` sorted by (te_ms, echo_idx).
+# %% ==============================================================================
+#   Pairwise comparison
+# =================================================================================
+pairs = [
+    (
+        t2_blipup_reg,
+        t2_blipdown_reg,
+        "T2 EPI Blip-Up (registered)",
+        "T2 EPI Blip-Down (registered)",
+        "Difference Blip-Up vs Blip-Down",
+    ),
+    (
+        t2_blipup_corrected_reg,
+        t2_blipdown_corrected_reg,
+        "T2 EPI Blip-Up Corrected (registered)",
+        "T2 EPI Blip-Down Corrected (registered)",
+        "Difference Blip-Up vs Blip-Down (Corrected)",
+    ),
+    (
+        t2_blipup_reg,
+        t2_blipup_corrected_reg,
+        "T2 EPI Blip-Up (registered)",
+        "T2 EPI Blip-Up Corrected (registered)",
+        "Difference Blip-Up raw vs corrected",
+    ),
+    (
+        t2_blipdown_reg,
+        t2_blipdown_corrected_reg,
+        "T2 EPI Blip-Down (registered)",
+        "T2 EPI Blip-Down Corrected (registered)",
+        "Difference Blip-Down raw vs corrected",
+    ),
+]
 
-    Parameters
-    ----------
-    variant : {'sse', 'triple', 'multishot'}
-    blip    : 'blipdown' or 'blipup' (ignored for multishot, which has no tag)
-    """
-    out: list[tuple[int, int, str]] = []
-    sse_set = set(SSE_TES_MS)
-    for fname in os.listdir(t2_dir):
-        if not fname.endswith(".nii.gz"):
+fig, ax = plt.subplots(len(pairs), 3, figsize=(15, 5 * len(pairs)))
+for i, (img_a, img_b, title_a, title_b, title_diff) in enumerate(pairs):
+    sl_a = get_slice(img_a)
+    sl_b = get_slice(img_b)
+    diff = np.abs(sl_a - sl_b)
+    mae_value = mae(img_a, img_b, non_zero=True) * 1000
+    ax[i, 0].imshow(sl_a, cmap="gray")
+    ax[i, 0].set_title(title_a)
+    ax[i, 1].imshow(sl_b, cmap="gray")
+    ax[i, 1].set_title(title_b)
+    ax[i, 2].imshow(diff, cmap="plasma")
+    ax[i, 2].set_title(f"{title_diff}\nMAE={mae_value:.4f} ms")
+    for j in range(3):
+        ax[i, j].axis("off")
+        fig.colorbar(ax[i, j].images[0], ax=ax[i, j], fraction=0.046, pad=0.04)
+plt.tight_layout()
+
+# %% ==============================================================================
+#   All-pairs MAE matrix
+# =================================================================================
+refs = [
+    t2Ref_reg,
+    # t2multishot_se_reg,
+    t2_blipup_reg,
+    t2_blipdown_reg,
+    t2_blipup_corrected_reg,
+    t2_blipdown_corrected_reg,
+]
+ref_names = [
+    "Reference",
+    # "Multishot SE",
+    "EPI blip-up (noise)",
+    "EPI blip-down (noise)",
+    "EPI blip-up corrected (noise)",
+    "EPI blip-down corrected (noise)",
+]
+size = len(refs)
+
+fig, ax = plt.subplots(
+    size + 1, size + 1, figsize=(30 * (size + 1) / 6, 30 * (size + 1) / 6)
+)
+ax[0, 0].axis("off")
+for i in range(len(refs)):
+    ax[0, i + 1].imshow(get_slice(refs[i]), cmap="gray")
+    ax[0, i + 1].axis("off")
+    ax[0, i + 1].set_title(ref_names[i])
+    ax[i + 1, 0].imshow(get_slice(refs[i]), cmap="gray")
+    ax[i + 1, 0].axis("off")
+    ax[i + 1, 0].set_title(ref_names[i])
+
+for i in range(len(refs)):
+    ref = refs[i]
+    ref_name = ref_names[i]
+    for j in range(len(refs)):
+        print(f"i,j shape: {np.squeeze(ref).shape}, {np.squeeze(refs[j]).shape}")
+        ax[i + 1, j + 1].axis("off")
+        if i == j:
             continue
-        if "T2w_TE" not in fname:
-            continue
-        te = _parse_te_ms(fname)
-        if te is None:
-            continue
-        if variant == "multishot":
-            # No blip tag: stem ends exactly at TE{number}.nii.gz
-            if fname.endswith(f"T2w_TE{te}.nii.gz"):
-                out.append((te, 0, fname))
-        else:
-            # SSE / triple share a directory and both have a blip suffix.
-            if f"_{blip}" not in fname:
-                continue
-            if variant == "sse":
-                # Match T2w_TE{te}_{blip}.nii.gz exactly (no _e suffix), and TE
-                # must come from the canonical SSE list to disambiguate from a
-                # rare triple-SE collision where n=0 hits an SSE-style TE.
-                if te not in sse_set:
-                    continue
-                if not fname.endswith(f"T2w_TE{te}_{blip}.nii.gz"):
-                    continue
-                out.append((te, 0, fname))
-            elif variant == "triple":
-                # Either T2w_TE{te}_{blip}.nii.gz (the n=0 echo) OR
-                # T2w_TE{te}_{blip}_e{n}.nii.gz (n>=1).
-                m_echo = _ECHO_RE.search(fname)
-                if m_echo is not None:
-                    echo = int(m_echo.group(1))
-                    if not fname.endswith(f"T2w_TE{te}_{blip}_e{echo}.nii.gz"):
-                        continue
-                    out.append((te, echo, fname))
-                else:
-                    # An "n=0" triple file looks identical to an SSE file.
-                    # Treat any non-SSE TE that ends with _blip.nii.gz as triple.
-                    if te in sse_set:
-                        continue
-                    if not fname.endswith(f"T2w_TE{te}_{blip}.nii.gz"):
-                        continue
-                    out.append((te, 0, fname))
-    out.sort(key=lambda t: (t[0], t[1]))
-    return out
-
-
-def _load_stack(t2_dir: str, files: Iterable[tuple[int, int, str]]) -> tuple[np.ndarray, np.ndarray]:
-    """Stack the listed T2w files along a new leading TE axis.
-
-    Returns
-    -------
-    stack    : ndarray, shape (n_te, Ny, Nx, n_slices), float32
-    te_s     : ndarray of TEs in seconds (sorted ascending), shape (n_te,)
-    """
-    arrs = []
-    tes_ms: list[int] = []
-    for te_ms, _echo, fname in files:
-        data = nib.load(os.path.join(t2_dir, fname)).get_fdata().astype(np.float32)
-        arrs.append(data)
-        tes_ms.append(te_ms)
-    if not arrs:
-        raise FileNotFoundError("no matching T2 files found")
-    stack = np.stack(arrs, axis=0)
-    te_s = np.asarray(tes_ms, dtype=float) * 1e-3
-    return stack, te_s
-
-
-# ---------------------------------------------------------------------------
-# Per-variant Monte Carlo
-# ---------------------------------------------------------------------------
-def run_variant_t2(
-    variant_name: str,
-    stack: np.ndarray,
-    te_s: np.ndarray,
-    tissue_masks: dict[str, np.ndarray],
-    snr_target: float,
-    n_real: int,
-    seed: int,
-    out_dir: str,
-    save_example_nifti: bool = True,
-) -> dict[str, dict[str, float]]:
-    """Run the noise-injection Monte Carlo for one variant.
-
-    Parameters
-    ----------
-    stack : (n_te, Ny, Nx, n_slices) float32
-        Noise-free T2-weighted magnitude volumes, sorted by TE.
-    te_s : (n_te,) ndarray
-        Echo times in seconds, in the same order as ``stack``'s first axis.
-    """
-    print(f"\n[T2-noise] variant={variant_name}  n_te={stack.shape[0]}  "
-          f"shape_per_te={stack.shape[1:]}  SNR={snr_target}  N={n_real}")
-
-    # Active-slice filter: many on-disk volumes were saved from partial sim runs
-    # where most slices are all-zero. Adding Rician noise to a zero slice
-    # produces a noise-only "background" that the fitter still spends CPU on.
-    # Detect which slices actually carry signal in any TE so we only fit those.
-    active_slices = np.where(stack.sum(axis=(0, 1, 2)) > 0)[0]
-    if active_slices.size == 0:
-        raise ValueError(f"{variant_name}: every slice in the stack is empty")
-    print(f"[T2-noise] {variant_name}: {active_slices.size}/{stack.shape[-1]} "
-          f"non-empty slices (indices {active_slices[0]}..{active_slices[-1]})")
-
-    # b=0 is assumed throughout (T2 acquisition); TE1 = smallest TE. Calibrate
-    # sigma from the TE1 mean over WM voxels that lie in an active slice — the
-    # zero-padded slices would otherwise dilute S_ref toward zero.
-    te1_idx = int(np.argmin(te_s))
-    s_ref_volume = stack[te1_idx]  # (Ny, Nx, n_slices)
-    wm_mask = tissue_masks["wm"]
-    if s_ref_volume.shape != wm_mask.shape:
-        raise ValueError(
-            f"{variant_name}: TE1 volume {s_ref_volume.shape} vs WM mask "
-            f"{wm_mask.shape} — re-check mask orientation"
+        target = refs[j]
+        target_name = ref_names[j]
+        im = np.abs(get_slice(ref) - get_slice(target))
+        mae_value = mae(ref, target, non_zero=True) * 1000
+        ax[i + 1, j + 1].imshow(im, cmap="plasma")
+        ax[i + 1, j + 1].set_title(
+            f"{ref_name} vs {target_name}\nMAE={mae_value:.4f} ms"
         )
-    wm_active = np.zeros_like(wm_mask)
-    wm_active[..., active_slices] = wm_mask[..., active_slices]
-    sigma = compute_sigma(s_ref_volume, wm_active, snr_target)
+plt.show()
 
-    # Restrict the per-tissue masks to the active slices too, so the per-tissue
-    # mean / median are not diluted by zero-fit voxels from non-acquired slices.
-    masks_active = {}
-    for t, m in tissue_masks.items():
-        m_active = np.zeros_like(m)
-        m_active[..., active_slices] = m[..., active_slices]
-        masks_active[t] = m_active
+# %% ==============================================================================
+#   First 2 rows of MAE matrix (Reference row only)
+# =================================================================================
+naming = lambda name: "T2 " + name + " [ms]"
 
-    # Sanity check: when no noise is added, the fit should match the noise-free
-    # path. We do not enforce this here, but the first realization with very
-    # high SNR converges to it; see the SNR sweep diagnostic at the bottom.
+fig, ax = plt.subplots(2, size, figsize=(30 * size / 6, 30 * 2 / 6))
 
-    accumulator = PerTissueAccumulator(masks_active, reference_values=T2_REFERENCE)
-    rng_root = np.random.default_rng(seed)
+ax[0, 0].axis("off")
+ax[0, 0].text(
+    0.5,
+    0.5,
+    "T2",
+    fontsize=36,
+    fontweight="bold",
+    ha="center",
+    va="center",
+    transform=ax[0, 0].transAxes,
+)
+for i in range(size - 1):
+    ax[0, i + 1].imshow(get_slice(refs[i + 1]), cmap="gray")
+    ax[0, i + 1].axis("off")
+    ax[0, i + 1].set_title(naming(ref_names[i + 1]))
 
-    n_te, Ny, Nx, Nz = stack.shape
-    t_start = time.perf_counter()
-    for k in range(n_real):
-        # Per-realization RNG so the noise field is reproducible and
-        # independent across realizations.
-        rng_k = np.random.default_rng(rng_root.integers(0, 2**31 - 1))
-        # Single shared sigma for every TE in this variant.
-        noisy_stack = add_rician_noise(stack, sigma, rng_k)
+for j in range(size):
+    ax[1, j].axis("off")
 
-        # Save one example noise-injected stack to disk for visual inspection.
-        if save_example_nifti and k == 0:
-            for te_i in (te1_idx,):  # only the TE1 volume to keep it small
-                fname = (
-                    f"{PHANTOM_NAME}_{variant_name}_TE{int(round(te_s[te_i]*1e3))}"
-                    f"_SNR{int(snr_target)}_noise_injected.nii.gz"
+ax[1, 0].imshow(get_slice(refs[0]), cmap="gray")
+ax[1, 0].set_title(naming(ref_names[0]))
+
+ref = refs[0]
+ref_name = ref_names[0]
+for j in range(1, size):
+    target = refs[j]
+    target_name = ref_names[j]
+    im = np.abs(get_slice(ref) - get_slice(target))
+    mae_value = mae(ref, target, non_zero=True) * 1000
+    ax[1, j].imshow(im, cmap="plasma")
+    ax[1, j].set_title(f"{ref_name} vs {target_name}\nMAE={mae_value:.4f} ms")
+
+plt.show()
+
+# %% ==============================================================================
+#   Per-tissue MAE (WM / GM / CSF)
+# =================================================================================
+tissue_mask_wm = load_nii(f"masks/brainweb-{subject}-mask_wm_volume.nii.gz")
+tissue_mask_gm = load_nii(f"masks/brainweb-{subject}-mask_gm_volume.nii.gz")
+tissue_mask_csf = load_nii(f"masks/brainweb-{subject}-mask_csf_volume.nii.gz")
+
+
+tissue_masks_arr = np.stack([tissue_mask_wm, tissue_mask_gm, tissue_mask_csf], axis=0)  # (3, H, W) — WM, GM, CSF
+tissue_masks_arr = tissue_masks_arr.astype(np.float32)
+tissue_names_masks = ["WM", "GM", "CSF"]
+
+# Plot center tissue mask for each tissue
+fig_masks, axs_masks = plt.subplots(
+    1, len(tissue_names_masks), figsize=(6 * len(tissue_names_masks), 6)
+)
+for t, name in enumerate(tissue_names_masks):
+    mask = tissue_masks_arr[t]
+    # if mask is 3D, pick central slice; otherwise assume 2D
+    if mask.ndim == 3:
+        disp = get_slice(mask)
+    else:
+        disp = mask
+    ax = axs_masks[t] if len(tissue_names_masks) > 1 else axs_masks
+    ax.imshow(disp, cmap="gray")
+    ax.set_title(f"Center mask - {name}")
+    ax.axis("off")
+plt.tight_layout()
+plt.show()
+
+#%%
+def mae_tissue(im1, im2, mask):
+    im1 = np.squeeze(im1)
+    im2 = np.squeeze(im2)
+    # flatten 3D to 2D if needed by taking the display slice
+    if im1.ndim == 3:
+        im1 = get_slice(im1)
+    if im2.ndim == 3:
+        im2 = get_slice(im2)
+    if mask.ndim == 3:
+        mask = get_slice(mask)
+    valid = (mask > 0) & (im1 > 0) & (im2 > 0)
+    if valid.sum() == 0:
+        return float("nan")
+    return np.mean(np.abs(im1[valid] - im2[valid]))
+
+
+n = len(refs)
+n_tissues = len(tissue_names_masks)
+mae_matrices = np.full((n_tissues, n, n), np.nan)
+for t in range(n_tissues):
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                mae_matrices[t, i, j] = (
+                    mae_tissue(refs[i], refs[j], tissue_masks_arr[t]) * 1000
                 )
-                save_volume_nifti(noisy_stack[te_i], os.path.join(out_dir, fname))
 
-        # Per-slice T2 fit, *only on active slices*. Non-active slices stay 0
-        # in the output volume; the per-tissue masks have been restricted to
-        # the active range so they do not contribute to the per-tissue stats.
-        t2_volume = np.zeros((Ny, Nx, Nz), dtype=np.float32)
-        for z in active_slices:
-            slice_data = noisy_stack[:, :, :, z]
-            t2_map, _ = create_t2_map(slice_data, te_s, t2_bounds=T2_BOUNDS_SEC)
-            t2_volume[:, :, z] = t2_map.astype(np.float32)
+col_w = 12
+print(f"\nPer-tissue T2 MAE (ms)")
+print(f"{'Pair':<45}" + "".join(f"{name:>{col_w}}" for name in tissue_names_masks))
+print("-" * (45 + col_w * n_tissues))
+for i in range(n):
+    for j in range(n):
+        if i == j:
+            continue
+        label = f"{ref_names[i]} vs {ref_names[j]}"
+        print(
+            f"{label:<45}"
+            + "".join(f"{mae_matrices[t, i, j]:>{col_w}.4f}" for t in range(n_tissues))
+        )
 
-        accumulator.update(t2_volume)
-        if (k + 1) % max(1, n_real // 10) == 0 or k + 1 == n_real:
-            elapsed = time.perf_counter() - t_start
-            eta = elapsed / (k + 1) * (n_real - k - 1)
-            print(f"  realization {k+1:>4d}/{n_real}  elapsed={elapsed:6.1f}s  ETA={eta:6.1f}s")
-
-    return accumulator.summary()
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-def main() -> None:
-    file_dir = _THIS_DIR
-    t2_dir   = os.path.join(file_dir, "t2_vol")
-    masks_dir = os.path.join(file_dir, "masks")
-    out_dir  = os.path.join(file_dir, "noise_injected")
-    os.makedirs(out_dir, exist_ok=True)
-
-    tissue_masks = load_tissue_masks(masks_dir, PHANTOM_NAME, ("wm", "gm", "csf"))
-    print(f"[T2-noise] tissue masks loaded   shape={tissue_masks['wm'].shape}   "
-          f"|WM|={int(tissue_masks['wm'].sum())}  |GM|={int(tissue_masks['gm'].sum())}  "
-          f"|CSF|={int(tissue_masks['csf'].sum())}")
-
-    variant_to_files = {
-        "t2_sse_blipdown":    _list_t2_files(t2_dir, "sse",       "blipdown"),
-        "t2_triple_blipdown": _list_t2_files(t2_dir, "triple",    "blipdown"),
-        "t2_multishot":       _list_t2_files(t2_dir, "multishot", "blipdown"),
-    }
-
-    for snr_target in SNR_TARGETS:
-        variant_summaries: dict[str, dict[str, dict[str, float]]] = {}
-        for var_name, files in variant_to_files.items():
-            if not files:
-                print(f"[T2-noise] {var_name}: no files found in {t2_dir}, skipping")
-                continue
-            try:
-                stack, te_s = _load_stack(t2_dir, files)
-            except FileNotFoundError as exc:
-                print(f"[T2-noise] {var_name}: {exc}; skipping")
-                continue
-            # Reorient the masks once per variant to match the on-disk volume
-            # frame. ``load_tissue_masks`` already reoriented; here we only
-            # sanity-check the shape against this variant's data.
-            if stack.shape[1:] != tissue_masks["wm"].shape:
-                print(
-                    f"[T2-noise] {var_name}: stack {stack.shape[1:]} vs mask "
-                    f"{tissue_masks['wm'].shape}; trying inverse reorient on masks"
+#%%
+fig, axes = plt.subplots(1, n_tissues, figsize=(7 * n_tissues, 6))
+for t, (ax_t, tissue) in enumerate(zip(axes, tissue_names_masks)):
+    mat = mae_matrices[t]
+    masked = np.ma.masked_invalid(mat)
+    cmap = plt.cm.plasma.copy()
+    cmap.set_bad(color="lightgray")
+    im = ax_t.imshow(masked, cmap=cmap, aspect="auto")
+    ax_t.set_xticks(range(n))
+    ax_t.set_yticks(range(n))
+    ax_t.set_xticklabels(ref_names, rotation=45, ha="right", fontsize=8)
+    ax_t.set_yticklabels(ref_names, fontsize=8)
+    ax_t.set_title(f"{tissue} - T2 MAE (ms)")
+    fig.colorbar(im, ax=ax_t, fraction=0.046, pad=0.04)
+    vmin, vmax = np.nanmin(mat), np.nanmax(mat)
+    mid = (vmin + vmax) / 2
+    for i in range(n):
+        for j in range(n):
+            val = mat[i, j]
+            if not np.isnan(val):
+                ax_t.text(
+                    j,
+                    i,
+                    f"{val:.2f}",
+                    ha="center",
+                    va="center",
+                    fontsize=7,
+                    color="white" if val < mid else "black",
                 )
-                # Disk masks were saved without the reorient; try the inverse
-                # if the user's data ended up in the un-reoriented frame.
-                fallback = {t: reorient_like_weighted_volume(m[..., ::-1])
-                            for t, m in tissue_masks.items()}
-                if stack.shape[1:] != fallback["wm"].shape:
-                    print(f"[T2-noise] {var_name}: still shape mismatch; skipping")
-                    continue
-                masks_for_variant = fallback
-            else:
-                masks_for_variant = tissue_masks
+plt.tight_layout()
+plt.show()
 
-            print(f"[T2-noise] {var_name}: TEs (s) = {np.round(te_s, 3).tolist()}")
-            summary = run_variant_t2(
-                variant_name=var_name,
-                stack=stack,
-                te_s=te_s,
-                tissue_masks=masks_for_variant,
-                snr_target=snr_target,
-                n_real=N_REAL,
-                seed=BASE_SEED,
-                out_dir=out_dir,
+for t, tissue in enumerate(tissue_names_masks):
+    mask = tissue_masks_arr[t]
+    if mask.ndim == 3:
+        mask = get_slice(mask)
+    refs_masked = [np.where(mask > 0, get_slice(np.squeeze(r)), -1) for r in refs]
+
+    fig_g, ax_g = plt.subplots(n + 1, n + 1, figsize=(5 * (n + 1), 5 * (n + 1)))
+    fig_g.suptitle(f"All-pairs comparison — {tissue}", fontsize=14)
+    ax_g[0, 0].axis("off")
+    for i in range(n):
+        for ax_rc, lbl in [
+            (ax_g[0, i + 1], ref_names[i]),
+            (ax_g[i + 1, 0], ref_names[i]),
+        ]:
+            ax_rc.imshow(refs_masked[i], cmap="gray")
+            ax_rc.set_title(lbl, fontsize=7)
+            ax_rc.axis("off")
+    for i in range(n):
+        for j in range(n):
+            ax_g[i + 1, j + 1].axis("off")
+            if i == j:
+                continue
+            diff = np.abs(refs_masked[i] - refs_masked[j])
+            ax_g[i + 1, j + 1].imshow(diff, cmap="plasma")
+            ax_g[i + 1, j + 1].set_title(
+                f"{ref_names[i]} vs {ref_names[j]}\nMAE={mae_matrices[t, i, j]:.4f} ms",
+                fontsize=7,
             )
-            variant_summaries[var_name] = summary
+    plt.tight_layout()
+tissue_mask_wm = load_nii(f"masks/brainweb-{subject}-mask_wm_volume.nii.gz")[1]
+plt.show()
 
-        print_summary_table(
-            f"T2 per-tissue precision  (SNR_target={snr_target}, N={N_REAL})",
-            "T2 in seconds; bias = mean - BrainWeb reference",
-            variant_summaries,
+# %% ==============================================================================
+#   MAE vs Reference per tissue — MSE EPI, MSE EPI Corrected
+# =================================================================================
+methods = {
+    "MSE EPI (noise)": (t2_blipup_reg, t2_blipdown_reg),
+    "MSE EPI Corrected (noise)": (t2_blipup_corrected_reg, t2_blipdown_corrected_reg),
+}
+
+mae_per_method = {}
+for method, (img_a, img_b) in methods.items():
+    vals = []
+    for t in range(n_tissues):
+        mask = tissue_masks_arr[t]
+        m_a = mae_tissue(img_a, t2Ref_reg, mask)
+        if img_b is not None:
+            m_b = mae_tissue(img_b, t2Ref_reg, mask)
+            vals.append((m_a + m_b) / 2)
+        else:
+            vals.append(m_a)
+    mae_per_method[method] = vals
+
+x = np.arange(n_tissues)
+n_methods = len(mae_per_method)
+width = 0.6 / n_methods
+offsets = np.arange(n_methods) * width - (n_methods - 1) * width / 2
+
+fig, ax_bar = plt.subplots(figsize=(8, 5))
+cmap = plt.get_cmap("plasma")
+colors = cmap(np.linspace(0, 1, n_methods))
+for idx, (method, vals) in enumerate(mae_per_method.items()):
+    bars = ax_bar.bar(x + offsets[idx], vals, width, label=method, color=colors[idx])
+    for bar, v in zip(bars, vals):
+        ax_bar.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{v:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
         )
+ax_bar.set_xticks(x)
+ax_bar.set_xticklabels(tissue_names_masks)
+ax_bar.set_ylabel("MAE (ms)")
+ax_bar.set_title("T2 MAE per tissue (noise)\n(MSE EPI averaged over blip-up and blip-down)")
+ax_bar.legend()
+plt.tight_layout()
+plt.show()
 
 
-if __name__ == "__main__":
-    main()
+# %% ==============================================================================
+#   Mean T2 per tissue — Reference vs acquisition methods
+# =================================================================================
+def mean_tissue(img, mask):
+    img = np.squeeze(img)
+    if img.ndim == 3:
+        img = get_slice(img)
+    if mask.ndim == 3:
+        mask = get_slice(mask)
+    valid = (mask > 0) & (img > 0)
+    if valid.sum() == 0:
+        return float("nan")
+    return np.mean(img[valid])
+
+
+all_acqs = {
+    "Reference": (t2Ref_reg, None),
+    "MSE EPI (noise)": (t2_blipup_reg, t2_blipdown_reg),
+    "MSE EPI Corrected (noise)": (t2_blipup_corrected_reg, t2_blipdown_corrected_reg),
+}
+
+mean_per_acq = {}
+for acq, (img_a, img_b) in all_acqs.items():
+    vals = []
+    for t in range(n_tissues):
+        mask = tissue_masks_arr[t]
+        m_a = mean_tissue(img_a, mask) * 1000
+        if img_b is not None:
+            m_b = mean_tissue(img_b, mask) * 1000
+            vals.append((m_a + m_b) / 2)
+        else:
+            vals.append(m_a)
+    mean_per_acq[acq] = vals
+
+n_acqs = len(mean_per_acq)
+width_m = 0.6 / n_acqs
+offsets_m = np.arange(n_acqs) * width_m - (n_acqs - 1) * width_m / 2
+colors_m = plt.get_cmap("plasma")(np.linspace(0, 1, n_acqs))
+
+fig, ax_mean = plt.subplots(figsize=(9, 5))
+for idx, (acq, vals) in enumerate(mean_per_acq.items()):
+    bars = ax_mean.bar(
+        x + offsets_m[idx], vals, width_m, label=acq, color=colors_m[idx]
+    )
+    for bar, v in zip(bars, vals):
+        ax_mean.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{v:.1f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
+ax_mean.set_xticks(x)
+ax_mean.set_xticklabels(tissue_names_masks)
+ax_mean.set_ylabel("Mean T2 (ms)")
+ax_mean.set_title(
+    "Mean T2 per tissue by acquisition (noise)\n(MSE EPI averaged over blip-up and blip-down)"
+)
+ax_mean.legend()
+plt.tight_layout()
+plt.show()
+
+# %%
+# %% ==============================================================================
+#   Reference comparison — per-tissue MAE + binary shape difference
+# =================================================================================
+blipdown_methods = {
+    "MSE EPI blip-down (noise)": t2_blipdown_reg,
+    "MSE EPI blip-down corrected (noise)": t2_blipdown_corrected_reg,
+}
+
+blipup_methods = {
+    "MSE EPI blip-up (noise)": t2_blipup_reg,
+    "MSE EPI blip-up corrected (noise)": t2_blipup_corrected_reg,
+}
+# ===========================================================
+# Blip-down
+# ===========================================================
+# ---- Per-tissue MAE vs Reference -------------------------------------------------
+mae_blipdown = {
+    name: [mae_tissue(img, t2Ref_reg, tissue_masks_arr[t]) * 1000 for t in range(n_tissues)]
+    for name, img in blipdown_methods.items()
+}
+
+x = np.arange(n_tissues)
+n_bd = len(mae_blipdown)
+width_bd = 0.6 / n_bd
+offsets_bd = np.arange(n_bd) * width_bd - (n_bd - 1) * width_bd / 2
+colors_bd = plt.get_cmap("plasma")(np.linspace(0, 1, n_bd))
+
+fig, ax_bd = plt.subplots(figsize=(8, 5))
+for idx, (name, vals) in enumerate(mae_blipdown.items()):
+    bars = ax_bd.bar(x + offsets_bd[idx], vals, width_bd, label=name, color=colors_bd[idx])
+    for bar, v in zip(bars, vals):
+        ax_bd.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{v:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
+ax_bd.set_xticks(x)
+ax_bd.set_xticklabels(tissue_names_masks)
+ax_bd.set_ylabel("MAE (ms)")
+ax_bd.set_title("Blip-down T2 MAE per tissue vs Reference (noise)")
+ax_bd.legend()
+plt.tight_layout()
+plt.show()
+
+# ---- Binary shape + intensity difference vs Reference ----------------------------
+def binarize(img):
+    return get_slice(np.squeeze(img)) > 0
+
+def dice(mask_a, mask_b):
+    inter = np.logical_and(mask_a, mask_b).sum()
+    denom = mask_a.sum() + mask_b.sum()
+    return 2.0 * inter / denom if denom > 0 else float("nan")
+
+ref_mask = binarize(t2Ref_reg)
+ref_slice = get_slice(t2Ref_reg)
+
+from matplotlib.colors import ListedColormap
+diff_cmap = ListedColormap(["#000000", "#1f9e89", "#fde725"])  # bg, ref-only, method-only
+
+fig, ax_sh = plt.subplots(len(blipdown_methods), 4, figsize=(20, 5 * len(blipdown_methods)))
+if len(blipdown_methods) == 1:
+    ax_sh = ax_sh[np.newaxis, :]
+
+for i, (name, img) in enumerate(blipdown_methods.items()):
+    m_mask = binarize(img)
+    m_slice = get_slice(np.squeeze(img))
+
+    # shape diff: 0=agreement, 1=reference only, 2=method only
+    diff_label = np.zeros_like(m_mask, dtype=np.uint8)
+    diff_label[ref_mask & ~m_mask] = 1
+    diff_label[m_mask & ~ref_mask] = 2
+
+    # intensity diff (ms), only where both have signal
+    valid = ref_mask & m_mask
+    intensity_diff = np.where(valid, np.abs(m_slice - ref_slice), 0.0) * 1000
+    mae_value = mae(img, t2Ref_reg, non_zero=True) * 1000
+
+    d = dice(m_mask, ref_mask)
+    n_disagree = int((diff_label > 0).sum())
+
+    ax_sh[i, 0].imshow(m_mask, cmap="gray")
+    ax_sh[i, 0].set_title(f"{name}\n(binary mask)")
+
+    ax_sh[i, 1].imshow(ref_mask, cmap="gray")
+    ax_sh[i, 1].set_title("Reference\n(binary mask)")
+
+    ax_sh[i, 2].imshow(diff_label, cmap=diff_cmap, vmin=0, vmax=2)
+    ax_sh[i, 2].set_title(
+        f"Shape diff\nDice={d:.4f}, disagree={n_disagree} px\n"
+        "yellow = method only, teal = reference only"
+    )
+
+    im_int = ax_sh[i, 3].imshow(intensity_diff, cmap="plasma")
+    ax_sh[i, 3].set_title(f"Intensity diff |method - ref|\nMAE={mae_value:.4f} ms")
+    fig.colorbar(im_int, ax=ax_sh[i, 3], fraction=0.046, pad=0.04)
+
+    for j in range(4):
+        ax_sh[i, j].axis("off")
+
+plt.tight_layout()
+plt.show()
+
+
+# ===========================================================
+# Blip-up
+# ===========================================================
+# ---- Per-tissue MAE vs Reference -------------------------------------------------
+mae_blipup = {
+    name: [mae_tissue(img, t2Ref_reg, tissue_masks_arr[t]) * 1000 for t in range(n_tissues)]
+    for name, img in blipup_methods.items()
+}
+
+x = np.arange(n_tissues)
+n_bd = len(mae_blipup)
+width_bd = 0.6 / n_bd
+offsets_bd = np.arange(n_bd) * width_bd - (n_bd - 1) * width_bd / 2
+colors_bd = plt.get_cmap("plasma")(np.linspace(0, 1, n_bd))
+
+fig, ax_bd = plt.subplots(figsize=(8, 5))
+for idx, (name, vals) in enumerate(mae_blipup.items()):
+    bars = ax_bd.bar(x + offsets_bd[idx], vals, width_bd, label=name, color=colors_bd[idx])
+    for bar, v in zip(bars, vals):
+        ax_bd.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{v:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
+ax_bd.set_xticks(x)
+ax_bd.set_xticklabels(tissue_names_masks)
+ax_bd.set_ylabel("MAE (ms)")
+ax_bd.set_title("Blip-up T2 MAE per tissue vs Reference (noise)")
+ax_bd.legend()
+plt.tight_layout()
+plt.show()
+
+# ---- Binary shape + intensity difference vs Reference ----------------------------
+ref_mask = binarize(t2Ref_reg)
+ref_slice = get_slice(t2Ref_reg)
+
+from matplotlib.colors import ListedColormap
+diff_cmap = ListedColormap(["#000000", "#1f9e89", "#fde725"])  # bg, ref-only, method-only
+
+fig, ax_sh = plt.subplots(len(blipup_methods), 4, figsize=(20, 5 * len(blipup_methods)))
+if len(blipup_methods) == 1:
+    ax_sh = ax_sh[np.newaxis, :]
+
+for i, (name, img) in enumerate(blipup_methods.items()):
+    m_mask = binarize(img)
+    m_slice = get_slice(np.squeeze(img))
+
+    # shape diff: 0=agreement, 1=reference only, 2=method only
+    diff_label = np.zeros_like(m_mask, dtype=np.uint8)
+    diff_label[ref_mask & ~m_mask] = 1
+    diff_label[m_mask & ~ref_mask] = 2
+
+    # intensity diff (ms), only where both have signal
+    valid = ref_mask & m_mask
+    intensity_diff = np.where(valid, np.abs(m_slice - ref_slice), 0.0) * 1000
+    mae_value = mae(img, t2Ref_reg, non_zero=True) * 1000
+
+    d = dice(m_mask, ref_mask)
+    n_disagree = int((diff_label > 0).sum())
+
+    ax_sh[i, 0].imshow(m_mask, cmap="gray")
+    ax_sh[i, 0].set_title(f"{name}\n(binary mask)")
+
+    ax_sh[i, 1].imshow(ref_mask, cmap="gray")
+    ax_sh[i, 1].set_title("Reference\n(binary mask)")
+
+    ax_sh[i, 2].imshow(diff_label, cmap="plasma")
+    ax_sh[i, 2].set_title(
+        f"Shape diff\nDice={d:.4f}, disagree={n_disagree} px\n"
+        "yellow = method only, teal = reference only"
+    )
+
+    im_int = ax_sh[i, 3].imshow(intensity_diff, cmap="plasma", vmax=2000)
+    ax_sh[i, 3].set_title(f"Intensity diff |method - ref|\nMAE={mae_value:.4f} ms")
+    fig.colorbar(im_int, ax=ax_sh[i, 3], fraction=0.046, pad=0.04)
+
+    for j in range(4):
+        ax_sh[i, j].axis("off")
+
+plt.tight_layout()
+plt.show()
+
+# %%

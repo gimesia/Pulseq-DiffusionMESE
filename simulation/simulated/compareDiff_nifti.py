@@ -65,8 +65,8 @@ adcRef = load_nii(f"volumes/brainweb-{subject}-D_ref_volume.nii.gz")
 adcmultishot_se = load_nii(
     f"volumes/brainweb-{subject}-ADC_NLLS_adc_multishot_volume.nii.gz"
 )
-adcMESE_blipup_corrected = load_nii(fr"{corrected_dir}/adc_blipup_corrected_trace.nii.gz") * 1000
-adcMESE_blipdown_corrected = load_nii(fr"{corrected_dir}/adc_blipdown_corrected_trace.nii.gz") * 1000
+adcMESE_blipup_corrected = load_nii(os.path.join(corrected_dir, f"brainweb-{subject}-ADCw_adc_blipup_corrected_trace.nii.gz")) * 1000
+adcMESE_blipdown_corrected = load_nii(os.path.join(corrected_dir, f"brainweb-{subject}-ADCw_adc_blipdown_corrected_trace.nii.gz")) * 1000
 
 
 ims = [
@@ -139,10 +139,10 @@ if REGISTER:
         f"volumes/brainweb-{subject}-ADC_NLLS_adc_multishot_volume.nii.gz"
     )
     adcMESE_blipup_corrected_reg = _reg(
-        fr"{corrected_dir}/adc_blipup_corrected_trace.nii.gz"
+        os.path.join(corrected_dir, f"brainweb-{subject}-ADCw_adc_blipup_corrected_trace.nii.gz")
     )*1000
     adcMESE_blipdown_corrected_reg = _reg(
-        fr"{corrected_dir}/adc_blipdown_corrected_trace.nii.gz"
+        os.path.join(corrected_dir, f"brainweb-{subject}-ADCw_adc_blipdown_corrected_trace.nii.gz")
     )*1000
     print("Registration complete.")
 else:
