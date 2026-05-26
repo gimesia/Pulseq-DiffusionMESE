@@ -36,49 +36,90 @@ import nibabel as nib
 import numpy as np
 from matplotlib.patches import FancyArrow
 from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import LinearLocator
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from cmcrameri import cm
 
 from phantom_loader import load_phantom
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Paths and selection
 # ──────────────────────────────────────────────────────────────────────────────
+SUBJ_ID    = "subj04"  # which BrainWeb phantom subject to show
+
 HERE       = Path(__file__).resolve().parent
 SIM_DIR    = HERE / "simulated"
-T2W_DIR    = SIM_DIR / "topup_results (FIELDMAPS)" / "t2_volumes_corrected_same"  # all T2w files are here
-DIFF_DIR   = SIM_DIR / "topup_results (FIELDMAPS)" / "diff_volumes_corrected_same"
+T2W_DIR    = SIM_DIR / "t2_vol"     # uncorrected — blip direction is visible
+DIFF_DIR   = SIM_DIR / "diff_vol"   # uncorrected — blip direction is visible
 VOL_DIR    = SIM_DIR / "volumes"
 PHANTOM_JSON = (
     HERE.parent
-    / "brainweb_phantoms" / "brainweb-subj04" / "brainweb-subj04-3T.json"
+    / "brainweb_phantoms" / f"brainweb-{SUBJ_ID}" / f"brainweb-{SUBJ_ID}-3T.json"
 )
 
-# Representative TEs / b-values shown in the middle block (top, top, bottom, bottom)
-T2_TES_MS   = [80, 120, 158, 236]
-DIFF_BVALS  = [100, 300, 500, 700]
-DIFF_DIR_ID = 0
-DIFF_TE_MS  = 100        # all DWI files exist at TE100/158/216 — pick one
-BLIP        = "blipdown"   # which polarity to show
+# Acquisitions shown in the middle block.
+TES_MS  = [100, 158, 216]           # column → TE
+B_VALS  = [0, 100, 500, 700]       # row    → b-value (dots inserted between)
+DIR_ID  = 0                          # which diffusion direction to display
+SWAP_TE = 158                        # this TE column is acquired in reversed
+                                     # order (blipdown | blipup) instead of
+                                     # (blipup | blipdown), for every b-value
 
-SLICE_FRAC  = 0.55       # which axial slice to show (fraction of nz)
+SLICE_FRAC = 0.55  # which axial slice to show (fraction of nz)
+
+D_max = 3.2
+T2_max = 1800
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Helpers
 # ──────────────────────────────────────────────────────────────────────────────
-def load_slice(path: Path) -> np.ndarray:
-    """Load a NIfTI and return the z-th axial slice, rotated for display."""
+def load_slice(path: Path, z = None) -> np.ndarray:
+    """Load a NIfTI and return one axial slice, rotated for display.
+
+    If ``z`` is None the middle slice is used.
+    """
     arr = nib.load(str(path)).get_fdata()
     if arr.ndim == 2:
         return np.rot90(arr)
-    return np.rot90(arr[:, :, arr.shape[2] // 2])
+    z = arr.shape[2] // 2
+    return np.rot90(arr[:, :, z])
 
 
-def show(ax, img, *, title=None, cmap="gray", vmin=None, vmax=None):
-    ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest")
+def _t2w_path(te_ms: int, blip: str) -> Path:
+    return T2W_DIR / f"brainweb-{SUBJ_ID}-T2w_TE{te_ms}_{blip}.nii.gz"
+
+
+def _dwi_path(te_ms: int, b: int, blip: str, dir_id: int) -> Path:
+    return (
+        DIFF_DIR
+        / f"brainweb-{SUBJ_ID}-ADCw_b{b}_dir{dir_id}_TE{te_ms}_{blip}.nii.gz"
+    )
+
+
+def _blip_glyph(blip: str) -> str:
+    """Compact polarity indicator used in image labels."""
+    return r"$\uparrow$" if blip == "blipup" else r"$\downarrow$"
+
+
+def show(ax, img, *, title=None, cmap="gray", vmin=None, vmax=None, cbar_label=None):
+    im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest")
     ax.set_xticks([]); ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_linewidth(1.2)
     if title:
-        ax.set_title(title, fontsize=9)
+        ax.set_title(title, fontsize=11)
+        
+    # Append a correctly sized colorbar to the RIGHT of the axis
+    if cbar_label is not None:
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.08)
+        cbar = plt.colorbar(im, cax=cax)
+        # Enforce exactly 5 ticks evenly distributed across the data range
+        cbar.locator = LinearLocator(numticks=5)
+        cbar.update_ticks()
+        cbar.ax.tick_params(labelsize=9)
+        if cbar_label:
+            cbar.set_label(cbar_label, fontsize=10)
 
 
 def dots_row(axes):
@@ -109,8 +150,6 @@ def big_arrow(fig, x0, x1, y, *, label=None):
 #  Load data
 # ──────────────────────────────────────────────────────────────────────────────
 print("[showcase] loading phantom for ground-truth D / T2 / B0 ...")
-# phantom_loader prints Unicode arrows that crash on Windows' cp1252 console;
-# capture its stdout so the showcase runs in any terminal.
 with contextlib.redirect_stdout(io.StringIO()):
     phantom, _, _ = load_phantom(
         json_path=str(PHANTOM_JSON),
@@ -122,123 +161,141 @@ D_in  = np.rot90(phantom.D.squeeze().numpy())
 T2_in = np.rot90(phantom.T2.squeeze().numpy())
 B0_in = np.rot90(phantom.B0.squeeze().numpy())
 
-# Slice index used everywhere on the saved volumes
-nz_vol = nib.load(str(VOL_DIR / "brainweb-subj04-D_ref_volume.nii.gz")).shape[2]
+nz_vol = nib.load(str(VOL_DIR / f"brainweb-{SUBJ_ID}-D_ref_volume.nii.gz")).shape[2]
 Z      = int(SLICE_FRAC * nz_vol)
 print(f"[showcase] axial slice z = {Z}/{nz_vol}")
 
-# T2-weighted images at the chosen TEs
-t2w_imgs = [
-    load_slice(T2W_DIR / f"brainweb-subj04-T2w_TE{te}_{BLIP}_corrected.nii.gz")
-    for te in T2_TES_MS
-]
+acq_imgs: dict[tuple[int, int, str], np.ndarray] = {}
+for _te in TES_MS:
+    for _b in B_VALS:
+        for _blip in ("blipup", "blipdown"):
+            acq_imgs[(_te, _b, _blip)] = load_slice(
+                _dwi_path(_te, _b, _blip, DIR_ID), Z
+            )
 
-# Diffusion-weighted images at the chosen b-values
-dwi_imgs = [
-    load_slice(
-        DIFF_DIR
-        / f"brainweb-subj04-ADCw_b{b}_dir{DIFF_DIR_ID}_TE{DIFF_TE_MS}_{BLIP}_corrected.nii.gz",
-    )
-    for b in DIFF_BVALS
-]
-
-# Recovered qMRI maps
 T2_out  = load_slice(
-    r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\volumes_corrected\t2_blipup_map_corrected.nii.gz"
-    # VOL_DIR / f"brainweb-subj04-T2_NLLS_t2_triple_{BLIP}_volume.nii.gz", Z
-)
+    SIM_DIR / "volumes_corrected"
+            / f"brainweb-{SUBJ_ID}-T2w_t2_blipup_map_corrected.nii.gz",
+    Z,
+)  
 ADC_out = load_slice(
-    r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\volumes_corrected\adc_blipup_dir1.nii.gz"
-    # VOL_DIR / f"brainweb-subj04-ADC_NLLS_adc_triple_{BLIP}_volume.nii.gz", Z
-) *1000
-# B0 "output" — show the same field map: in this study the reference B0 is
-# what topup is asked to recover, so it doubles as the recovered field map.
+    SIM_DIR / "volumes_corrected"
+            / f"brainweb-{SUBJ_ID}-ADCw_adc_blipup_corrected_trace.nii.gz",
+    Z,
+) * 1000  
 B0_out  = load_slice(
-    r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\topup_results (FIELDMAPS)\readoutTE1_same\fieldmap_Hz_blipdown.nii.gz",
+    SIM_DIR / "topup_results (FIELDMAPS)" / "readoutTE1_same"
+            / "fieldmap_Hz_blipdown.nii.gz",
+    Z,
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Figure layout
 # ──────────────────────────────────────────────────────────────────────────────
-#  Three blocks side by side, separated by arrows drawn in figure coordinates.
-#  Each block is its own GridSpec so the inner cells can have independent sizes
-#  without forcing alignment across blocks.
-fig = plt.figure(figsize=(14, 7), facecolor="white")
+# We establish a top-level GridSpec for the columns to cleanly enforce that the 
+# Left (Phantom) and Right (qMRI) columns take up larger space than the center ones.
+fig = plt.figure(figsize=(19, 9), facecolor="white")
+master_gs = GridSpec(1, 3, left=0.02, right=0.98, top=0.92, bottom=0.06, 
+                     width_ratios=[1.4, 3.2, 1.4], wspace=0.22)
 
-#  Block 1: phantom inputs (3 rows × 1 col) — left=0.04, right=0.22
-gs_in  = GridSpec(3, 1, left=0.04, right=0.22, top=0.92, bottom=0.06,
-                  hspace=0.18)
+#  Block 1: phantom inputs (3 rows × 1 col)
+gs_in  = master_gs[0].subgridspec(3, 1, hspace=0.18)
 ax_D  = fig.add_subplot(gs_in[0])
 ax_T2 = fig.add_subplot(gs_in[1])
 ax_B0 = fig.add_subplot(gs_in[2])
 
-show(ax_D,  D_in,        title="D  [10$^{-3}$ mm²/s]",
-     cmap="magma",   vmin=0,    vmax=3.0)
-show(ax_T2, T2_in * 1e3, title="T2  [ms]",
-     cmap="viridis", vmin=0,    vmax=300)
-show(ax_B0, B0_in,        title="B0  [Hz]",
-     cmap="seismic", vmin=-50,  vmax=50)
-ax_D.set_ylabel("Phantom\ninputs", fontsize=11, rotation=0,
-                ha="right", va="center", labelpad=20)
+# No hard vmax limits on quantitative maps to auto-scale safely
+show(ax_D,  D_in,        title="D", cbar_label="10$^{-3}$ mm²/s",
+     cmap=cm.lipari,   vmin=0, vmax=D_max)
+show(ax_T2, T2_in * 1e3, title="T2", cbar_label="ms",
+     cmap=cm.navia, vmin=0, vmax=T2_max)
+show(ax_B0, B0_in,        title="B0", cbar_label="Hz",
+     cmap="seismic", vmin=-50, vmax=50)
 
-#  Block 2: acquisitions (5 rows × 2 cols, middle row is the dots)
-gs_acq = GridSpec(5, 2, left=0.32, right=0.68, top=0.92, bottom=0.06,
-                  hspace=0.18, wspace=0.10,
-                  height_ratios=[1, 1, 0.35, 1, 1])
-ax_t2w = [fig.add_subplot(gs_acq[r, 0]) for r in (0, 1, 3, 4)]
-ax_dwi = [fig.add_subplot(gs_acq[r, 1]) for r in (0, 1, 3, 4)]
-ax_dots = [fig.add_subplot(gs_acq[2, 0]), fig.add_subplot(gs_acq[2, 1])]
+# Header and Footer Labels assigned strictly to the first and last axes
+ax_D.text(0.5, 1.25, "Phantom inputs", transform=ax_D.transAxes,
+          ha="center", va="bottom", fontsize=13, fontweight="bold")
+ax_B0.text(0.5, -0.22, "Phantom inputs", transform=ax_B0.transAxes,
+          ha="center", va="top", fontsize=11, color="gray")
 
-# Column headers — place above the top row of images
-ax_t2w[0].set_title("T2-weighted", fontsize=11, pad=10)
-ax_dwi[0].set_title("Diffusion-weighted", fontsize=11, pad=10)
 
-# Common display scale across the column for fair visual comparison
-t2w_vmax = max(im.max() for im in t2w_imgs)
-dwi_vmax = max(im.max() for im in dwi_imgs)
+#  Block 2: (TE × b) acquisition matrix
+gs_acq = master_gs[1].subgridspec(5, 3, hspace=0.45, wspace=0.18,
+                                  height_ratios=[1, 1, 0.25, 1, 1])
 
-for ax, im, te in zip(ax_t2w, t2w_imgs, T2_TES_MS):
-    show(ax, im, vmin=0, vmax=t2w_vmax)
-    ax.text(0.04, 0.95, f"TE = {te} ms",
-            color="white", fontsize=8, ha="left", va="top",
-            transform=ax.transAxes,
-            bbox=dict(facecolor="black", alpha=0.45,
-                      edgecolor="none", boxstyle="round,pad=0.15"))
+b_to_row = {b: r for b, r in zip(B_VALS, (0, 1, 3, 4))} 
 
-for ax, im, b in zip(ax_dwi, dwi_imgs, DIFF_BVALS):
-    show(ax, im, vmin=0, vmax=dwi_vmax)
-    ax.text(0.04, 0.95, f"b = {b} s/mm²",
-            color="white", fontsize=8, ha="left", va="top",
-            transform=ax.transAxes,
-            bbox=dict(facecolor="black", alpha=0.45,
-                      edgecolor="none", boxstyle="round,pad=0.15"))
+def _cell_label(ax_left, te_ms: int, b: int) -> None:
+    """Joint (TE, b) label, sitting cleanly below the cell's bottom-LEFT corner."""
+    ax_left.text(
+        0.0, -0.06,
+        f"(TE, b) = ({te_ms} ms, {b} s/mm²)",
+        ha="left", va="top", fontsize=9, fontweight="bold",
+        transform=ax_left.transAxes,
+    )
 
-dots_row(ax_dots)
+def _blip_header(ax, blip: str) -> None:
+    ax.text(
+        0.5, 1.18, f"blip {_blip_glyph(blip)}",
+        ha="center", va="bottom", fontsize=11, fontweight="bold",
+        transform=ax.transAxes,
+    )
+
+for c_idx, te in enumerate(TES_MS):
+    if te == SWAP_TE:
+        left_blip, right_blip = "blipdown", "blipup"
+    else:
+        left_blip, right_blip = "blipup", "blipdown"
+
+    for b in B_VALS:
+        r = b_to_row[b]
+        inner = gs_acq[r, c_idx].subgridspec(1, 2, wspace=0.04)
+        ax_L = fig.add_subplot(inner[0, 0])
+        ax_R = fig.add_subplot(inner[0, 1])
+
+        # vmax removed completely to auto-scale frames independently
+        show(ax_L, acq_imgs[(te, b, left_blip)],  vmin=0)
+        show(ax_R, acq_imgs[(te, b, right_blip)], vmin=0)
+        _cell_label(ax_L, te, b)
+
+        if b == B_VALS[0]:
+            _blip_header(ax_L, left_blip)
+            _blip_header(ax_R, right_blip)
+
+for c_idx in range(len(TES_MS)):
+    ax_d = fig.add_subplot(gs_acq[2, c_idx])
+    ax_d.axis("off")
+    ax_d.text(0.5, 0.5, r"$\vdots$", ha="center", va="center",
+              fontsize=22, transform=ax_d.transAxes)
+
 
 #  Block 3: qMRI outputs (3 rows × 1 col)
-gs_out = GridSpec(3, 1, left=0.78, right=0.96, top=0.92, bottom=0.06,
-                  hspace=0.18)
+gs_out = master_gs[2].subgridspec(3, 1, hspace=0.18)
 ax_ADC = fig.add_subplot(gs_out[0])
 ax_T2m = fig.add_subplot(gs_out[1])
 ax_B0m = fig.add_subplot(gs_out[2])
 
-show(ax_ADC, ADC_out,        title="ADC  [10$^{-3}$ mm²/s]",
-     cmap="magma",   vmin=0,    vmax=3.0)
-show(ax_T2m, T2_out  * 1e3, title="T2  [ms]",
-     cmap="viridis", vmin=0,    vmax=300)
-show(ax_B0m, B0_out,         title="B0  [Hz]",
-     cmap="seismic", vmin=-50,  vmax=50)
-ax_ADC.set_ylabel("qMRI\nmaps", fontsize=11, rotation=0,
-                  ha="right", va="center", labelpad=20)
+# Vmax bounds stripped completely to adhere to your instruction
+show(ax_ADC, ADC_out,        title="ADC map", cbar_label="10$^{-3}$ mm²/s",
+     cmap=cm.lipari,   vmin=0, vmax=D_max)
+show(ax_T2m, T2_out  * 1e3, title="T2 map", cbar_label="ms",
+     cmap=cm.navia, vmin=0, vmax=T2_max)
+show(ax_B0m, B0_out,         title="B0 map", cbar_label="Hz",
+     cmap="seismic", vmin=-50, vmax=50)
 
-#  Arrows between blocks
-big_arrow(fig, 0.23, 0.31, 0.50, label="MRzero")
-big_arrow(fig, 0.69, 0.77, 0.50, label="NLLS fit / TOPUP")
+# Header and Footer Labels attached strictly to the first and last axes
+ax_ADC.text(0.5, 1.25, "qMRI maps", transform=ax_ADC.transAxes,
+            ha="center", va="bottom", fontsize=13, fontweight="bold")
+ax_B0m.text(0.5, -0.22, "qMRI maps", transform=ax_B0m.transAxes,
+            ha="center", va="top", fontsize=11, color="gray")
 
-# fig.suptitle(
-#     "Pulseq-DiffusionMESE simulation pipeline",
-#     fontsize=14, y=0.985,
-# )
+
+#  Arrows connecting workflows
+big_arrow(fig, 0.12, 0.16, 0.50, label="MRzero")
+big_arrow(fig, 0.82, 0.86, 0.50, label="TOPUP + Fit")
+for txt in fig.texts:
+    if txt.get_text() in {"MRzero", "TOPUP + Fit"}:
+        txt.set_fontsize(12)
 
 out_path = SIM_DIR / "figs" / "pipeline_showcase.png"
 out_path.parent.mkdir(parents=True, exist_ok=True)

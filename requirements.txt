@@ -43,3 +43,5 @@ tqdm
 requests
 pyyaml
 juliacall
+
+cmcrameri
