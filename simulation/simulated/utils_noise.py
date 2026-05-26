@@ -52,6 +52,63 @@ def reorient_like_weighted_volume(volume: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# True 3-D volume registration (single transform, not per-slice)
+# ---------------------------------------------------------------------------
+def register_volume_to_reference(
+    moving: np.ndarray,
+    reference: np.ndarray,
+    *,
+    type_of_transform: str = "Rigid",
+    spacing: tuple = (1.0, 1.0, 1.0),
+) -> np.ndarray:
+    """True 3-D ANTs registration of a moving volume to a reference volume.
+
+    Unlike ``utils_sim_lib.register_to_reference_3d`` (which is a per-slice 2-D
+    loop despite its name), this estimates a single 3-D transform on the
+    whole volume so out-of-plane misalignment is corrected too.
+
+    Parameters
+    ----------
+    moving, reference : ndarray of shape (Ny, Nx, Nz)
+        Both volumes must be on the same grid. NaN / Inf are zero-filled
+        before registration.
+    type_of_transform : str
+        Passed straight to ``ants.registration``. ``"Rigid"`` (default) is
+        usually right for mask-to-TE1 alignment.
+    spacing : tuple of float
+        Voxel size in mm for the ANTs image; ignored for a pure-rigid metric
+        as long as both inputs share it. Default (1, 1, 1) is fine when both
+        sides are on the same grid.
+
+    Returns
+    -------
+    warped : ndarray of shape (Ny, Nx, Nz)
+        The moving volume resampled into the reference grid.
+    """
+    import ants  # local import — heavy dependency
+
+    moving_3d = np.nan_to_num(
+        np.asarray(moving, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    reference_3d = np.nan_to_num(
+        np.asarray(reference, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    if moving_3d.shape != reference_3d.shape:
+        raise ValueError(
+            f"Moving {moving_3d.shape} and reference {reference_3d.shape} shapes differ."
+        )
+    if not np.any(moving_3d) or not np.any(reference_3d):
+        return moving_3d
+
+    mov_img = ants.from_numpy(moving_3d, spacing=spacing)
+    ref_img = ants.from_numpy(reference_3d, spacing=spacing)
+    warped = ants.registration(
+        ref_img, mov_img, type_of_transform=type_of_transform
+    )["warpedmovout"].numpy()
+    return warped
+
+
+# ---------------------------------------------------------------------------
 # Mask loading
 # ---------------------------------------------------------------------------
 def load_tissue_masks(

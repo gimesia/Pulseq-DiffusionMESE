@@ -48,25 +48,31 @@ if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
 from utils_diffusion import create_adc_map
-from utils_sim_lib import register_to_reference_3d
 from utils_noise import (
     add_rician_noise,
     compute_sigma,
     load_tissue_masks,
+    register_volume_to_reference,
 )
 
 
 # =================================================================================
 # Config
 # =================================================================================
-SNR_TARGET     = 20.0     # sigma_var = WM(b=0, TE1, dir-avg) mean / SNR_TARGET
-SEED           = 0        # base seed; each variant gets a derived sub-seed
-REGISTER_MASKS = False    # if True, ANTs-Rigid-register tissue masks to each
+SNR_TARGET     = 40.0     # sigma_var = WM(b=0, TE1, dir-avg) mean / SNR_TARGET
+SEED           = 420        # base seed; each variant gets a derived sub-seed
+REGISTER_MASKS = True    # if True, ANTs-Rigid-register tissue masks to each
                           # variant's b=0 / TE1 / dir-averaged volume before
                           # sigma calibration. Default off; raw blipup/blipdown
                           # are aligned with the masks by construction. Enable
                           # when the corrected (topup-warped) variants show
                           # residual misalignment.
+FOREGROUND_FRAC = 0.05    # foreground mask threshold as fraction of the
+                          # noise-free b=0 / dir-averaged max. Voxels below
+                          # this are zeroed in the noisy stack and in the
+                          # fitted ADC map. Prevents the topup-warped
+                          # background haze from being fit to ADC_MAX. Set to
+                          # 0 to disable foreground masking.
 
 
 # =================================
@@ -114,16 +120,20 @@ def _register_masks_to_b0(
     b_values: np.ndarray,
     label: str,
 ) -> dict:
-    """Rigid-register each tissue mask to the variant's b=0 / TE1 reference."""
+    """Volume-level (true 3-D) rigid registration of tissue masks to b=0/TE1.
+
+    A single 3-D rigid transform is estimated per tissue mask via
+    :func:`utils_noise.register_volume_to_reference` so out-of-plane drift is
+    corrected too.
+    """
     ref_yxz = _b0_reference_yxz(dir_stacks, b_values)
     out = {}
     for tissue, mask in masks_yxz.items():
         moving = mask.astype(np.float32)
-        warped = register_to_reference_3d(moving, ref_yxz, type_of_transform="Rigid")
-        warped = np.nan_to_num(warped, nan=0.0, posinf=0.0, neginf=0.0)
+        warped = register_volume_to_reference(moving, ref_yxz, type_of_transform="Rigid")
         out[tissue] = warped >= 0.5
         moved = int(np.abs(out[tissue].astype(int) - mask.astype(int)).sum())
-        print(f"[ADC-noise] {label}: registered {tissue} mask, "
+        print(f"[ADC-noise] {label}: registered {tissue} mask (3-D Rigid), "
               f"voxel-flip vs. unregistered = {moved}")
     return out
 
@@ -159,6 +169,24 @@ def _calibrate_sigma_diff(
 def _apply_noise(stack: np.ndarray, sigma: float, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     return add_rician_noise(stack, sigma, rng)
+
+
+def _foreground_mask_from_b0(
+    dir_stacks: tuple,
+    b_values: np.ndarray,
+    frac: float,
+    label: str,
+) -> np.ndarray:
+    """Boolean (slice, y, x) foreground mask from the dir-averaged b=0 volume."""
+    if frac <= 0.0:
+        return np.ones(dir_stacks[0].shape[1:], dtype=bool)
+    b0 = _b0_index(b_values)
+    ref = np.mean(np.stack([d[b0] for d in dir_stacks], axis=0), axis=0)  # (slice, y, x)
+    thr = frac * float(ref.max())
+    fg = ref > thr
+    print(f"[ADC-noise] {label}: foreground mask "
+          f"({int(fg.sum())}/{fg.size} voxels, threshold={thr:.3g})")
+    return fg
 
 
 def _trace_from_dirs(dir0: np.ndarray, dir1: np.ndarray, dir2: np.ndarray) -> np.ndarray:
@@ -267,7 +295,7 @@ print(f"Using b-values (after B_MAX={B_MAX}): {Bs_used}")
 
 # Tissue masks (need WM for the calibration anchor).
 masks_dir = os.path.join(file_dir, "masks")
-phantom_name = subject if subject.startswith("brainweb-") else f"brainweb-{subject}"
+phantom_name = "-".join(subject.split("-")[:2]) if subject.startswith("brainweb-") else f"brainweb-{subject}"
 tissue_masks = load_tissue_masks(masks_dir, phantom_name, ("wm", "gm", "csf"))
 print(f"Tissue masks loaded   shape={tissue_masks['wm'].shape}   "
       f"|WM|={int(tissue_masks['wm'].sum())}")
@@ -419,34 +447,49 @@ sigma_bd_corrected = _calibrate_sigma_diff(bd_corr_dirs, Bs_used, masks_bd_corre
 
 
 # %%===============================
-# Inject Rician noise — one sigma per variant, reused across all dirs and b-values
+# Foreground masks (per variant, from noise-free b=0 dir-averaged volumes)
+# =================================
+print()
+print(f"--- Building per-variant foreground masks at FOREGROUND_FRAC={FOREGROUND_FRAC} ---")
+fg_bu           = _foreground_mask_from_b0(bu_dirs,      Bs_used, FOREGROUND_FRAC, "blipup (raw)")
+fg_bd           = _foreground_mask_from_b0(bd_dirs,      Bs_used, FOREGROUND_FRAC, "blipdown (raw)")
+fg_bu_corrected = _foreground_mask_from_b0(bu_corr_dirs, Bs_used, FOREGROUND_FRAC, "blipup (corrected)")
+fg_bd_corrected = _foreground_mask_from_b0(bd_corr_dirs, Bs_used, FOREGROUND_FRAC, "blipdown (corrected)")
+
+
+# %%===============================
+# Inject Rician noise — one sigma per variant, reused across all dirs and b-values.
+# Foreground-mask each direction so the topup-warped background haze is zeroed
+# before the trace + fit (otherwise the fitter saturates ADC at ADC_MAX in
+# the background, contaminating the saved map).
 # =================================
 print()
 print("--- Injecting Rician noise into every (b, dir) volume ---")
-def _noisify(stacks, sigma, seed_offset):
+def _noisify(stacks, sigma, seed_offset, foreground=None):
     """Apply Rician noise to a 3-tuple of (dir0, dir1, dir2) stacks.
 
     Different sub-seeds per direction so the noise field is independent
-    across directions but the variance level (sigma) is the same.
+    across directions but the variance level (sigma) is the same. If a
+    ``foreground`` mask is given, voxels outside it are zeroed in every
+    (b, dir) volume.
     """
     rng_seed = SEED + seed_offset
-    return tuple(_apply_noise(s, sigma, rng_seed + 100 * d) for d, s in enumerate(stacks))
+    out = tuple(_apply_noise(s, sigma, rng_seed + 100 * d) for d, s in enumerate(stacks))
+    if foreground is not None:
+        out = tuple(s * foreground[None, ...] for s in out)
+    return out
 
 (niftis_bu_dir0_noisy, niftis_bu_dir1_noisy, niftis_bu_dir2_noisy) = _noisify(
-    (niftis_bu_dir0_resampled, niftis_bu_dir1_resampled, niftis_bu_dir2_resampled),
-    sigma_bu, 1,
+    bu_dirs, sigma_bu, 1, foreground=fg_bu,
 )
 (niftis_bd_dir0_noisy, niftis_bd_dir1_noisy, niftis_bd_dir2_noisy) = _noisify(
-    (niftis_bd_dir0_resampled, niftis_bd_dir1_resampled, niftis_bd_dir2_resampled),
-    sigma_bd, 2,
+    bd_dirs, sigma_bd, 2, foreground=fg_bd,
 )
 (niftis_bu_corr_dir0_noisy, niftis_bu_corr_dir1_noisy, niftis_bu_corr_dir2_noisy) = _noisify(
-    (niftis_bu_corrected_dir0_resampled, niftis_bu_corrected_dir1_resampled, niftis_bu_corrected_dir2_resampled),
-    sigma_bu_corrected, 3,
+    bu_corr_dirs, sigma_bu_corrected, 3, foreground=fg_bu_corrected,
 )
 (niftis_bd_corr_dir0_noisy, niftis_bd_corr_dir1_noisy, niftis_bd_corr_dir2_noisy) = _noisify(
-    (niftis_bd_corrected_dir0_resampled, niftis_bd_corrected_dir1_resampled, niftis_bd_corrected_dir2_resampled),
-    sigma_bd_corrected, 4,
+    bd_corr_dirs, sigma_bd_corrected, 4, foreground=fg_bd_corrected,
 )
 
 # Recompute trace from the noisy per-direction stacks (eps-floored geomean).
@@ -532,10 +575,18 @@ variant_inputs = {
         "trace": niftis_bd_corrected_trace_noisy,
     },
 }
+variant_foregrounds = {
+    "blipup":             fg_bu,
+    "blipdown":           fg_bd,
+    "blipup_corrected":   fg_bu_corrected,
+    "blipdown_corrected": fg_bd_corrected,
+}
 saved_outputs: list[str] = []
 for variant_name, inputs in variant_inputs.items():
+    fg = variant_foregrounds[variant_name]
     for key, stack in inputs.items():
         adc_map_vol = _fit_adc_volume(stack, Bs_used, adc_max=ADC_MAX, label=f"{variant_name} {key}")
+        adc_map_vol *= fg                          # zero outside the foreground
         transposed = np.transpose(adc_map_vol, (2, 1, 0))
         rotated = np.flip(np.rot90(transposed, k=1, axes=(0, 1)), axis=0)
         out_name = f"{subject_id}_ADC_{variant_name}_{key}_noise_{stamp}.nii.gz"
@@ -554,6 +605,7 @@ metadata = {
     "SNR_TARGET":        SNR_TARGET,
     "SEED":              SEED,
     "REGISTER_MASKS":    REGISTER_MASKS,
+    "FOREGROUND_FRAC":   FOREGROUND_FRAC,
     "TE_echo_ms":        int(TE.replace("TE", "")),
     "b_values":          [int(b) for b in Bs_used],
     "B_MAX":             None if not np.isfinite(B_MAX) else float(B_MAX),

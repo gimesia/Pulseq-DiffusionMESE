@@ -46,11 +46,11 @@ if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
 from utils_relaxometry import create_t2_map
-from utils_sim_lib import register_to_reference_3d
 from utils_noise import (
     add_rician_noise,
     compute_sigma,
     load_tissue_masks,
+    register_volume_to_reference,
 )
 
 
@@ -58,13 +58,21 @@ from utils_noise import (
 # Config
 # =================================================================================
 SNR_TARGET     = 40.0     # SNR_TARGET ~> sigma = WM_mean / SNR_TARGET on TE1
-SEED           = 0        # base seed; each stack variant gets a derived sub-seed
-REGISTER_MASKS = False    # if True, ANTs-Rigid-register tissue masks to each
+SEED           = 420        # base seed; each stack variant gets a derived sub-seed
+REGISTER_MASKS = True    # if True, ANTs-Rigid-register tissue masks to each
                           # variant's TE1 magnitude volume before sigma
                           # calibration and per-tissue stats. Default off; the
                           # raw blipup/blipdown volumes are aligned with the
                           # masks by construction. Enable when the corrected
                           # (topup-warped) variants show residual misalignment.
+FOREGROUND_FRAC = 0.05    # foreground mask threshold as fraction of TE1 max.
+                          # Voxels below this in the noise-free TE1 volume are
+                          # treated as "outside the object" — noise is NOT
+                          # added there, and the fitted T2 is forced to 0 in
+                          # those voxels. Prevents the topup-warped background
+                          # haze from being fit to T2 = t2_bounds[1] (the
+                          # saturation hits hardest at SNR>=40). Set to 0 to
+                          # disable foreground masking and add noise everywhere.
 
 
 # =================================================================================
@@ -129,29 +137,27 @@ def _register_masks_to_te1(
     resampled_stack: np.ndarray,
     label: str,
 ) -> dict:
-    """Rigid-register each tissue mask to a variant's TE1 volume.
+    """Volume-level (true 3-D) rigid registration of tissue masks to TE1.
 
-    Both inputs are in ``(y, x, slice)`` form. ``resampled_stack`` has shape
-    ``(n_te, slice, y, x)`` — we transpose its TE1 slice to ``(y, x, slice)``
-    so the existing slice-last :func:`register_to_reference_3d` can be reused.
+    Both inputs are conceptually in ``(y, x, slice)`` form. ``resampled_stack``
+    has shape ``(n_te, slice, y, x)`` — we transpose its TE1 slice to
+    ``(y, x, slice)`` so the moving mask and the reference live on the same
+    grid. A single 3-D rigid transform is estimated on the full volume (not
+    per-slice) via :func:`utils_noise.register_volume_to_reference`, so any
+    out-of-plane drift is corrected too.
 
-    A single rigid transform is sought per tissue mask, then resampled
-    probability values are thresholded at 0.5 to recover a boolean mask. WM
-    is the primary anchor (highest TE1 contrast); the registration is run
-    independently for GM and CSF too — that is slightly redundant but keeps
-    each mask's per-slice transform self-consistent without re-implementing
-    the ANTs wrapper.
+    Resampled probability values are thresholded at 0.5 to recover a boolean
+    mask. WM is the primary contrast anchor; GM and CSF are registered
+    independently against the same TE1 reference for consistency.
     """
     te1_yxz = np.transpose(resampled_stack[0], (1, 2, 0)).astype(np.float32)
     out = {}
     for tissue, mask in masks_yxz.items():
         moving = mask.astype(np.float32)
-        warped = register_to_reference_3d(moving, te1_yxz, type_of_transform="Rigid")
-        # NaNs come back for empty slices; treat as zero (not part of the mask).
-        warped = np.nan_to_num(warped, nan=0.0, posinf=0.0, neginf=0.0)
+        warped = register_volume_to_reference(moving, te1_yxz, type_of_transform="Rigid")
         out[tissue] = warped >= 0.5
         moved = int(np.abs(out[tissue].astype(int) - mask.astype(int)).sum())
-        print(f"[T2-noise] {label}: registered {tissue} mask, "
+        print(f"[T2-noise] {label}: registered {tissue} mask (3-D Rigid), "
               f"voxel-flip vs. unregistered = {moved}")
     return out
 
@@ -160,6 +166,28 @@ def _apply_rician_noise_stack(stack: np.ndarray, sigma: float, seed: int) -> np.
     """Add Rician noise to every (TE, slice, y, x) sample with a single sigma."""
     rng = np.random.default_rng(seed)
     return add_rician_noise(stack, sigma, rng)
+
+
+def _foreground_mask_from_te1(
+    resampled_stack: np.ndarray,
+    frac: float,
+    label: str,
+) -> np.ndarray:
+    """Boolean (slice, y, x) mask of voxels with noise-free TE1 above ``frac * max``.
+
+    Defines the "object" region that genuinely carries signal. Used to clamp
+    noise injection and to zero the fitted T2 map in the background. The mask
+    is built from the *noise-free* TE1 volume so it is identical across
+    Monte-Carlo realisations.
+    """
+    if frac <= 0.0:
+        return np.ones(resampled_stack.shape[1:], dtype=bool)
+    te1 = resampled_stack[0]
+    thr = frac * float(te1.max())
+    fg = te1 > thr
+    print(f"[T2-noise] {label}: foreground mask "
+          f"({int(fg.sum())}/{fg.size} voxels, threshold={thr:.3g})")
+    return fg
 
 
 def _fit_t2_volume(stack_resampled: np.ndarray, TEs: np.ndarray, t2_bounds, label: str):
@@ -304,14 +332,28 @@ sigma_bd_corrected = _calibrate_sigma_from_te1(niftis_bd_corrected_resampled, ma
 
 
 # %%===============================
+# Foreground masks (per variant, from the noise-free TE1 volume)
+# =================================
+print()
+print(f"--- Building per-variant foreground masks at FOREGROUND_FRAC={FOREGROUND_FRAC} ---")
+fg_bu           = _foreground_mask_from_te1(niftis_bu_resampled,           FOREGROUND_FRAC, "blipup (raw)")
+fg_bd           = _foreground_mask_from_te1(niftis_bd_resampled,           FOREGROUND_FRAC, "blipdown (raw)")
+fg_bu_corrected = _foreground_mask_from_te1(niftis_bu_corrected_resampled, FOREGROUND_FRAC, "blipup (corrected)")
+fg_bd_corrected = _foreground_mask_from_te1(niftis_bd_corrected_resampled, FOREGROUND_FRAC, "blipdown (corrected)")
+
+
+# %%===============================
 # Inject Rician noise (single realization per variant, reproducible via SEED)
+# Noise is added everywhere physically, then the foreground mask zeros voxels
+# outside the object so the fitter sees a clean zero background (otherwise
+# the topup-warped background haze + noise floor get fit to t2_bounds[1]).
 # =================================
 print()
 print("--- Injecting Rician noise into every TE volume of each variant ---")
-niftis_bu_noisy           = _apply_rician_noise_stack(niftis_bu_resampled,           sigma_bu,           SEED + 1)
-niftis_bd_noisy           = _apply_rician_noise_stack(niftis_bd_resampled,           sigma_bd,           SEED + 2)
-niftis_bu_corrected_noisy = _apply_rician_noise_stack(niftis_bu_corrected_resampled, sigma_bu_corrected, SEED + 3)
-niftis_bd_corrected_noisy = _apply_rician_noise_stack(niftis_bd_corrected_resampled, sigma_bd_corrected, SEED + 4)
+niftis_bu_noisy           = _apply_rician_noise_stack(niftis_bu_resampled,           sigma_bu,           SEED + 1) * fg_bu[None, ...]
+niftis_bd_noisy           = _apply_rician_noise_stack(niftis_bd_resampled,           sigma_bd,           SEED + 2) * fg_bd[None, ...]
+niftis_bu_corrected_noisy = _apply_rician_noise_stack(niftis_bu_corrected_resampled, sigma_bu_corrected, SEED + 3) * fg_bu_corrected[None, ...]
+niftis_bd_corrected_noisy = _apply_rician_noise_stack(niftis_bd_corrected_resampled, sigma_bd_corrected, SEED + 4) * fg_bd_corrected[None, ...]
 
 # Save one example noise-injected TE1 volume per variant for visual inspection.
 # Output lives in the same directory the source was loaded from, named
@@ -346,24 +388,28 @@ print("--- Fitting T2 on noise-injected stacks ---")
 t2_blipup_map_noise, _ = _fit_t2_volume(
     niftis_bu_noisy, TEs, t2_bounds=(0.0, 3.0), label="blipup (noisy)"
 )
+t2_blipup_map_noise *= fg_bu                       # zero outside the foreground
 print(f"Blipup T2 map shape: {t2_blipup_map_noise.shape}")
 t2_blipup_map_transposed = np.transpose(t2_blipup_map_noise, (2, 1, 0))
 
 t2_blipdown_map_noise, _ = _fit_t2_volume(
     niftis_bd_noisy, TEs, t2_bounds=(0.0, 2.2), label="blipdown (noisy)"
 )
+t2_blipdown_map_noise *= fg_bd
 print(f"Blipdown T2 map shape: {t2_blipdown_map_noise.shape}")
 t2_blipdown_map_transposed = np.transpose(t2_blipdown_map_noise, (2, 1, 0))
 
 t2_blipdown_map_corrected_noise, _ = _fit_t2_volume(
     niftis_bd_corrected_noisy, TEs, t2_bounds=(0.0, 2.2), label="blipdown_corrected (noisy)"
 )
+t2_blipdown_map_corrected_noise *= fg_bd_corrected
 print(f"Corrected blipdown T2 map shape: {t2_blipdown_map_corrected_noise.shape}")
 t2_blipdown_map_corrected_transposed = np.transpose(t2_blipdown_map_corrected_noise, (2, 1, 0))
 
 t2_blipup_map_corrected_noise, _ = _fit_t2_volume(
     niftis_bu_corrected_noisy, TEs, t2_bounds=(0.0, 2.2), label="blipup_corrected (noisy)"
 )
+t2_blipup_map_corrected_noise *= fg_bu_corrected
 print(f"Corrected blipup T2 map shape: {t2_blipup_map_corrected_noise.shape}")
 t2_blipup_map_corrected_transposed = np.transpose(t2_blipup_map_corrected_noise, (2, 1, 0))
 
@@ -412,6 +458,7 @@ metadata = {
     "SNR_TARGET":        SNR_TARGET,
     "SEED":              SEED,
     "REGISTER_MASKS":    REGISTER_MASKS,
+    "FOREGROUND_FRAC":   FOREGROUND_FRAC,
     "TEs_seconds":       TEs.tolist(),
     "TE1_anchor_s":      float(TEs[0]),
     "n_TEs":             int(TEs.size),
@@ -431,9 +478,9 @@ metadata = {
     },
     "t2_bounds_seconds": {
         "blipup":             [0.0, 3.0],
-        "blipdown":           [0.0, 2.2],
-        "blipup_corrected":   [0.0, 2.2],
-        "blipdown_corrected": [0.0, 2.2],
+        "blipdown":           [0.0, 3],
+        "blipup_corrected":   [0.0, 3],
+        "blipdown_corrected": [0.0, 3],
     },
     "outputs": [
         f"{subject_id}_T2_{variant}_noise_{stamp}.nii.gz"

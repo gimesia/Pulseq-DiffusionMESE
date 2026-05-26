@@ -44,8 +44,8 @@ from phantom_loader import load_phantom
 # ──────────────────────────────────────────────────────────────────────────────
 HERE       = Path(__file__).resolve().parent
 SIM_DIR    = HERE / "simulated"
-T2W_DIR    = SIM_DIR / "t2_vol"
-DIFF_DIR   = SIM_DIR / "diff_vol"
+T2W_DIR    = SIM_DIR / "topup_results (FIELDMAPS)" / "t2_volumes_corrected_same"  # all T2w files are here
+DIFF_DIR   = SIM_DIR / "topup_results (FIELDMAPS)" / "diff_volumes_corrected_same"
 VOL_DIR    = SIM_DIR / "volumes"
 PHANTOM_JSON = (
     HERE.parent
@@ -53,18 +53,18 @@ PHANTOM_JSON = (
 )
 
 # Representative TEs / b-values shown in the middle block (top, top, bottom, bottom)
-T2_TES_MS   = [80, 125, 158, 236]
-DIFF_BVALS  = [100, 300, 700, 900]
+T2_TES_MS   = [80, 120, 158, 236]
+DIFF_BVALS  = [100, 300, 500, 700]
 DIFF_DIR_ID = 0
 DIFF_TE_MS  = 100        # all DWI files exist at TE100/158/216 — pick one
-BLIP        = "blipup"   # which polarity to show
+BLIP        = "blipdown"   # which polarity to show
 
 SLICE_FRAC  = 0.55       # which axial slice to show (fraction of nz)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Helpers
 # ──────────────────────────────────────────────────────────────────────────────
-def load_slice(path: Path, z: int) -> np.ndarray:
+def load_slice(path: Path) -> np.ndarray:
     """Load a NIfTI and return the z-th axial slice, rotated for display."""
     arr = nib.load(str(path)).get_fdata()
     if arr.ndim == 2:
@@ -129,7 +129,7 @@ print(f"[showcase] axial slice z = {Z}/{nz_vol}")
 
 # T2-weighted images at the chosen TEs
 t2w_imgs = [
-    load_slice(T2W_DIR / f"brainweb-subj04-T2w_TE{te}_{BLIP}.nii.gz", Z)
+    load_slice(T2W_DIR / f"brainweb-subj04-T2w_TE{te}_{BLIP}_corrected.nii.gz")
     for te in T2_TES_MS
 ]
 
@@ -137,24 +137,25 @@ t2w_imgs = [
 dwi_imgs = [
     load_slice(
         DIFF_DIR
-        / f"brainweb-subj04-ADCw_b{b}_dir{DIFF_DIR_ID}_TE{DIFF_TE_MS}_{BLIP}.nii.gz",
-        Z,
+        / f"brainweb-subj04-ADCw_b{b}_dir{DIFF_DIR_ID}_TE{DIFF_TE_MS}_{BLIP}_corrected.nii.gz",
     )
     for b in DIFF_BVALS
 ]
 
 # Recovered qMRI maps
 T2_out  = load_slice(
-    # r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\volumes_corrected\t2_blipup_map_corrected.nii.gz"
-    VOL_DIR / f"brainweb-subj04-T2_NLLS_t2_triple_{BLIP}_volume.nii.gz", Z
+    r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\volumes_corrected\t2_blipup_map_corrected.nii.gz"
+    # VOL_DIR / f"brainweb-subj04-T2_NLLS_t2_triple_{BLIP}_volume.nii.gz", Z
 )
 ADC_out = load_slice(
-    # r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\volumes_corrected\adc_blipup_dir1.nii.gz"
-    VOL_DIR / f"brainweb-subj04-ADC_NLLS_adc_triple_{BLIP}_volume.nii.gz", Z
-)
+    r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\volumes_corrected\adc_blipup_dir1.nii.gz"
+    # VOL_DIR / f"brainweb-subj04-ADC_NLLS_adc_triple_{BLIP}_volume.nii.gz", Z
+) *1000
 # B0 "output" — show the same field map: in this study the reference B0 is
 # what topup is asked to recover, so it doubles as the recovered field map.
-B0_out  = B0_in
+B0_out  = load_slice(
+    r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\topup_results (FIELDMAPS)\readoutTE1_same\fieldmap_Hz_blipdown.nii.gz",
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Figure layout
@@ -232,12 +233,12 @@ ax_ADC.set_ylabel("qMRI\nmaps", fontsize=11, rotation=0,
 
 #  Arrows between blocks
 big_arrow(fig, 0.23, 0.31, 0.50, label="MRzero")
-big_arrow(fig, 0.69, 0.77, 0.50, label="NLLS fit / topup")
+big_arrow(fig, 0.69, 0.77, 0.50, label="NLLS fit / TOPUP")
 
-fig.suptitle(
-    "Pulseq-DiffusionMESE simulation pipeline",
-    fontsize=14, y=0.985,
-)
+# fig.suptitle(
+#     "Pulseq-DiffusionMESE simulation pipeline",
+#     fontsize=14, y=0.985,
+# )
 
 out_path = SIM_DIR / "figs" / "pipeline_showcase.png"
 out_path.parent.mkdir(parents=True, exist_ok=True)

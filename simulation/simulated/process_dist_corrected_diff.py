@@ -45,7 +45,7 @@ ADC_MAX = 3.6         # physiological ceiling
 B_MAX = np.inf        # upper b-value cutoff; np.inf -> use all b-values
 
 file_dir = os.path.dirname(os.path.abspath(__file__))
-
+save_dir = os.path.join(file_dir, "volumes_corrected")
 fieldmap_dir = rf"{file_dir}/topup_results (FIELDMAPS)"
 adc_dir = rf"{file_dir}/diff_vol"
 adc_corrected_dir = rf"{fieldmap_dir}/diff_volumes_corrected_same"
@@ -306,7 +306,7 @@ for key, stack in bu_inputs.items():
 
     adc_blipup_map_transposed = np.transpose(adc_blipup_map, (2, 1, 0))
     adc_blipup_map_rot = np.flip(np.rot90(adc_blipup_map_transposed, k=1, axes=(0, 1)), axis=(0))
-    nib.save(nib.Nifti1Image(adc_blipup_map_rot, affine), os.path.join(file_dir, f"{subject}_adc_blipup_{key}.nii.gz"))
+    nib.save(nib.Nifti1Image(adc_blipup_map_rot, affine), os.path.join(save_dir, f"{subject}_adc_blipup_{key}.nii.gz"))
 
 
 # %%===============================
@@ -329,7 +329,7 @@ for key, stack in bd_inputs.items():
 
     adc_blipdown_map_transposed = np.transpose(adc_blipdown_map, (2, 1, 0))
     adc_blipdown_map_rot = np.flip(np.rot90(adc_blipdown_map_transposed, k=1, axes=(0, 1)), axis=(0))
-    nib.save(nib.Nifti1Image(adc_blipdown_map_rot, affine), os.path.join(file_dir, f"{subject}_adc_blipdown_{key}.nii.gz"))
+    nib.save(nib.Nifti1Image(adc_blipdown_map_rot, affine), os.path.join(save_dir, f"{subject}_adc_blipdown_{key}.nii.gz"))
 
 
 # %%===============================
@@ -352,7 +352,7 @@ for key, stack in bu_corrected_inputs.items():
 
     adc_blipup_map_corrected_transposed = np.transpose(adc_blipup_map_corrected, (2, 1, 0))
     adc_blipup_map_corrected_rot = np.flip(np.rot90(adc_blipup_map_corrected_transposed, k=1, axes=(0, 1)), axis=(0))
-    nib.save(nib.Nifti1Image(adc_blipup_map_corrected_rot, affine), os.path.join(file_dir, f"{subject}_adc_blipup_corrected_{key}.nii.gz"))
+    nib.save(nib.Nifti1Image(adc_blipup_map_corrected_rot, affine), os.path.join(save_dir, f"{subject}_adc_blipup_corrected_{key}.nii.gz"))
 
 
 # %%===============================
@@ -375,7 +375,7 @@ for key, stack in bd_corrected_inputs.items():
 
     adc_blipdown_map_corrected_transposed = np.transpose(adc_blipdown_map_corrected, (2, 1, 0))
     adc_blipdown_map_corrected_rot = np.flip(np.rot90(adc_blipdown_map_corrected_transposed, k=1, axes=(0, 1)), axis=(0))
-    nib.save(nib.Nifti1Image(adc_blipdown_map_corrected_rot, affine), os.path.join(file_dir, f"{subject}_adc_blipdown_corrected_{key}.nii.gz"))
+    nib.save(nib.Nifti1Image(adc_blipdown_map_corrected_rot, affine), os.path.join(save_dir, f"{subject}_adc_blipdown_corrected_{key}.nii.gz"))
 
 
 # %%===============================

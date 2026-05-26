@@ -41,6 +41,7 @@ def te_value(f):
 # Discover Files and Prepare TE List
 # =================================
 file_dir = os.path.dirname(os.path.abspath(__file__))
+save_dir = rf"{file_dir}/volumes_corrected"
 
 fieldmap_dir = rf"{file_dir}/topup_results (FIELDMAPS)"
 t2_dir = rf"{file_dir}/t2_vol"
@@ -225,9 +226,11 @@ bd_out = nib.Nifti1Image(t2_blipdown_map_rot, affine)
 bu_out = nib.Nifti1Image(t2_blipup_map_rot, affine)
 bd_out_corrected = nib.Nifti1Image(t2_blipdown_map_corrected_rot, affine)
 bu_out_corrected = nib.Nifti1Image(t2_blipup_map_corrected_rot, affine)
-nib.save(bu_out, os.path.join(file_dir, f"{subject}_t2_blipup_map.nii.gz"))
-nib.save(bd_out, os.path.join(file_dir, f"{subject}_t2_blipdown_map.nii.gz"))
-nib.save(bu_out_corrected, os.path.join(file_dir, f"{subject}_t2_blipup_map_corrected.nii.gz"))
-nib.save(bd_out_corrected, os.path.join(file_dir, f"{subject}_t2_blipdown_map_corrected.nii.gz"))
+nib.save(bu_out, os.path.join(save_dir, f"{subject}_t2_blipup_map.nii.gz"))
+nib.save(bd_out, os.path.join(save_dir, f"{subject}_t2_blipdown_map.nii.gz"))
+nib.save(bu_out_corrected, os.path.join(save_dir, f"{subject}_t2_blipup_map_corrected.nii.gz"))
+nib.save(bd_out_corrected, os.path.join(save_dir, f"{subject}_t2_blipdown_map_corrected.nii.gz"))
 
 
+
+# %%
