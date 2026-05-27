@@ -59,7 +59,7 @@ from utils_noise import (
 # =================================================================================
 # Config
 # =================================================================================
-SNR_TARGET     = 40.0     # sigma_var = WM(b=0, TE1, dir-avg) mean / SNR_TARGET
+SNR_TARGET     = 1.0     # sigma_var = WM(b=0, TE1, dir-avg) mean / SNR_TARGET
 SEED           = 420        # base seed; each variant gets a derived sub-seed
 REGISTER_MASKS = True    # if True, ANTs-Rigid-register tissue masks to each
                           # variant's b=0 / TE1 / dir-averaged volume before

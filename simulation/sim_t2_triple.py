@@ -211,10 +211,12 @@ def run_t2_triple(
 
     # Stems may collide when TE2/TE3 (auto-computed) round to the same ms
     # across different TE1 values — disambiguate with a sequential suffix.
+    # te_sorted is in seconds (see /1000.0 above); convert back to ms for the
+    # stem so the filename matches the physical echo time.
     weighted_images: dict[str, np.ndarray] = {}
     _seen: dict[str, int] = {}
-    for i, te_ms in enumerate(te_sorted):
-        base = f"T2w_TE{int(round(te_ms))}_{blip_tag}"
+    for i, te_s in enumerate(te_sorted):
+        base = f"T2w_TE{int(round(te_s * 1000.0))}_{blip_tag}"
         n = _seen.get(base, 0)
         stem = base if n == 0 else f"{base}_e{n}"
         _seen[base] = n + 1

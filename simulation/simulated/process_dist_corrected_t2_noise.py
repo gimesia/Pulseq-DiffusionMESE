@@ -57,7 +57,7 @@ from utils_noise import (
 # =================================================================================
 # Config
 # =================================================================================
-SNR_TARGET     = 40.0     # SNR_TARGET ~> sigma = WM_mean / SNR_TARGET on TE1
+SNR_TARGET     = 1.0     # SNR_TARGET ~> sigma = WM_mean / SNR_TARGET on TE1
 SEED           = 420        # base seed; each stack variant gets a derived sub-seed
 REGISTER_MASKS = True    # if True, ANTs-Rigid-register tissue masks to each
                           # variant's TE1 magnitude volume before sigma

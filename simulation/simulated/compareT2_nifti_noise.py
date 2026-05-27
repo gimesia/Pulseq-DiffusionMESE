@@ -10,9 +10,13 @@ import re
 import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
+from cmcrameri import cm
+cmap = cm.navia
 
 filepath = os.path.dirname(os.path.abspath(__file__))
 noised_dir = os.path.join(filepath, "volumes_noised")
+fig_path = os.path.join(filepath, "figs")
 
 SUBJECT_ID = 0
 subjects = np.unique(
@@ -61,7 +65,7 @@ if not _t2_noise_matches:
         "Run process_dist_corrected_t2_noise.py first."
     )
 _t2_stamp_m = re.search(
-    r"_noise_(SNR\d+_seed\d+_reg\w+)\.nii\.gz$", _t2_noise_matches[-1]
+    r"_noise_(SNR\d+_seed\d+_reg\w+)\.nii\.gz$", _t2_noise_matches[-2]
 )
 t2_stamp = _t2_stamp_m.group(1) if _t2_stamp_m else "SNR40_seed420_regON"
 print(f"T2 noise stamp: {t2_stamp}")
@@ -162,7 +166,7 @@ else:
     t2multishot_se_reg = np.squeeze(t2multishot_se)
     print("Registration skipped — using raw images.")
 
-fig.savefig("t2_noise_comparison_matrix.png", dpi=300, bbox_inches="tight")
+fig.savefig(rf"{fig_path}/t2_noise_comparison_matrix.png", dpi=300, bbox_inches="tight")
 
 
 # %% ==============================================================================
@@ -270,6 +274,23 @@ plt.show()
 # %% ==============================================================================
 #   First 2 rows of MAE matrix (Reference row only)
 # =================================================================================
+refs = [
+    t2Ref_reg,
+    # t2multishot_se_reg,
+    t2_blipup_reg,
+    # t2_blipdown_reg,
+    t2_blipup_corrected_reg,
+    # t2_blipdown_corrected_reg,
+]
+ref_names = [
+    "Reference",
+    # "Multishot SE",
+    "MSE EPI blip-up",
+    # "EPI blip-down (noise)",
+    "MSE EPI after TOPUP",
+    # "EPI blip-down corrected (noise)",
+]
+size = len(refs)
 naming = lambda name: "T2 " + name + " [ms]"
 
 fig, ax = plt.subplots(2, size, figsize=(30 * size / 6, 30 * 2 / 6))
@@ -286,27 +307,47 @@ ax[0, 0].text(
     transform=ax[0, 0].transAxes,
 )
 for i in range(size - 1):
-    ax[0, i + 1].imshow(get_slice(refs[i + 1]), cmap="gray")
+    ax[0, i + 1].imshow(np.rot90(get_slice(refs[i + 1])), cmap=cmap, vmax=1.8)
     ax[0, i + 1].axis("off")
     ax[0, i + 1].set_title(naming(ref_names[i + 1]))
+    fig.colorbar(ax[0, i + 1].images[0], ax=ax[0, i + 1], fraction=0.046, pad=0.04)
 
 for j in range(size):
     ax[1, j].axis("off")
 
-ax[1, 0].imshow(get_slice(refs[0]), cmap="gray")
+ax[1, 0].imshow(np.rot90(get_slice(refs[0])), cmap=cmap, vmax=1.8)
 ax[1, 0].set_title(naming(ref_names[0]))
+fig.colorbar(ax[1, 0].images[0], ax=ax[1, 0], fraction=0.046, pad=0.04)
 
 ref = refs[0]
 ref_name = ref_names[0]
-for j in range(1, size):
-    target = refs[j]
-    target_name = ref_names[j]
-    im = np.abs(get_slice(ref) - get_slice(target))
-    mae_value = mae(ref, target, non_zero=True) * 1000
-    ax[1, j].imshow(im, cmap="plasma")
-    ax[1, j].set_title(f"{ref_name} vs {target_name}\nMAE={mae_value:.4f} ms")
 
-plt.show()
+colors = [
+    (0.0,  (0.1, 0.95, 1.0)),   # more saturated cyan (negative extreme)
+    (0.22, (0.0, 0.18, 0.85)),  # saturated blue
+    (0.5,  (0.0, 0.0, 0.0)),   # black at 0
+    (0.78, (0.8, 0.0, 0.0)),    # saturated red
+    (1.0,  (1.0, 0.08, 0.0)),   # bright red (positive extreme)
+]
+cold_black_warm = LinearSegmentedColormap.from_list(
+    'cold_black_warm', colors
+)
+# pass 1: build all difference images and find the global symmetric limit
+diffs = []
+for j in range(1, size):
+    diffs.append(np.rot90(get_slice(ref) - get_slice(refs[j])))
+L = max(np.nanmax(np.abs(d)) for d in diffs) / 2# shared limit -> same vmax for all panels
+
+# pass 2: plot with the shared scale
+for j in range(1, size):
+    target_name = ref_names[j]
+    im = diffs[j - 1]
+
+    mae_value = mae(ref, refs[j], non_zero=True) * 1000
+    ax[1, j].imshow(im, cmap=cold_black_warm, vmin=-L, vmax=L)
+    ax[1, j].set_title(f"{ref_name} - {target_name}")
+    cbar = fig.colorbar(ax[1, j].images[0], ax=ax[1, j], fraction=0.046, pad=0.04)
+    cbar.set_ticks(np.linspace(-L, L, 5))  # middle tick is exactly 0
 
 # %% ==============================================================================
 #   Per-tissue MAE (WM / GM / CSF)
@@ -315,8 +356,15 @@ tissue_mask_wm = load_nii(f"masks/brainweb-{subject}-mask_wm_volume.nii.gz")
 tissue_mask_gm = load_nii(f"masks/brainweb-{subject}-mask_gm_volume.nii.gz")
 tissue_mask_csf = load_nii(f"masks/brainweb-{subject}-mask_csf_volume.nii.gz")
 
+from skimage.morphology import disk, binary_erosion
+se = disk(0)
+for i in range(tissue_mask_wm.shape[2]):
+    tissue_mask_wm[:, :, i] = binary_erosion(tissue_mask_wm[:, :, i], se)
+    tissue_mask_gm[:, :, i] = binary_erosion(tissue_mask_gm[:, :, i], se)
+    tissue_mask_csf[:, :, i] = binary_erosion(tissue_mask_csf[:, :, i], se)
 
 tissue_masks_arr = np.stack([tissue_mask_wm, tissue_mask_gm, tissue_mask_csf], axis=0)  # (3, H, W) — WM, GM, CSF
+
 tissue_masks_arr = tissue_masks_arr.astype(np.float32)
 tissue_names_masks = ["WM", "GM", "CSF"]
 
@@ -453,6 +501,8 @@ methods = {
 }
 
 mae_per_method = {}
+
+
 for method, (img_a, img_b) in methods.items():
     vals = []
     for t in range(n_tissues):
@@ -616,7 +666,7 @@ def dice(mask_a, mask_b):
 ref_mask = binarize(t2Ref_reg)
 ref_slice = get_slice(t2Ref_reg)
 
-from matplotlib.colors import ListedColormap
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 diff_cmap = ListedColormap(["#000000", "#1f9e89", "#fde725"])  # bg, ref-only, method-only
 
 fig, ax_sh = plt.subplots(len(blipdown_methods), 4, figsize=(20, 5 * len(blipdown_methods)))
