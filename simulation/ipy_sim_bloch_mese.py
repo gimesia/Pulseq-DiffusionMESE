@@ -39,6 +39,7 @@ from mrinufft import get_operator
 
 from utils_simulation import *
 import phantom_loader
+import _paths
 
 np.int = int
 np.float = float
@@ -48,7 +49,7 @@ np.complex = complex
 #   Paths
 # =================================================================================
 SEQUENCES_DIR_PATH = rf"..\pulseq_diffusion_mese\seq_files"
-PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
+PHANTOMS_DIR_PATH = _paths.PHANTOMS_DIR_PATH
 
 # %% ==============================================================================
 #   Simulation parameters

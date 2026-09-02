@@ -1,10 +1,12 @@
 # %%
 import os
 import sys
+from pathlib import Path
 
-sim_path = (
-    r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation"
-)
+# This script's own directory is simulation/simulated; the imports below
+# live one level up, in simulation/ — resolved relative to this repo so
+# the script works after any clone.
+sim_path = str(Path(__file__).resolve().parent.parent)
 if sim_path not in sys.path:
     sys.path.append(sim_path)
 
@@ -243,7 +245,7 @@ fig.suptitle(
 )
 plt.tight_layout()
 # save results
-results_dir = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\vol"
+results_dir = "./vol"
 
 # save numeric outputs (uncompressed .npy)
 np.save(

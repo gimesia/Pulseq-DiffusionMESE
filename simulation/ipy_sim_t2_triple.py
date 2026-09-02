@@ -18,12 +18,11 @@ import nibabel as nib
 from pypulseq import Sequence
 
 import phantom_loader
+import _paths
 
-
-# The path to the pulseq-diffusion-mese directory.
-# TODO: It is advisable to replace this with a more robust method for path management,
-# such as using environment variables or a configuration file.
-seq_path = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\pulseq_diffusion_mese"
+# The path to the pulseq-diffusion-mese directory, resolved relative to
+# this repo so the script works after any clone.
+seq_path = str(_paths.PACKAGE_DIR)
 if seq_path not in sys.path:
     sys.path.append(seq_path)
 
@@ -48,10 +47,10 @@ PHANTOM_IDX = 0
 # =================================================================================
 #   Paths
 # =================================================================================
-SEQUENCES_DIR_PATH = rf".\simulated\seq"
-VOLUMES_DIR_PATH = rf".\simulated\brainmaps"
-PHANTOMS_DIR_PATH = rf"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms"
-ECHO_IMAGES_DIR_PATH = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\t2_img"
+SEQUENCES_DIR_PATH = _paths.SIMULATION_DIR / "simulated" / "seq"
+VOLUMES_DIR_PATH = _paths.SIMULATION_DIR / "simulated" / "brainmaps"
+PHANTOMS_DIR_PATH = _paths.PHANTOMS_DIR_PATH
+ECHO_IMAGES_DIR_PATH = _paths.SIMULATION_DIR / "simulated" / "t2_img"
 
 # %% ==============================================================================
 #   Simulation parameters

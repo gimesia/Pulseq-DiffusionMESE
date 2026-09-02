@@ -484,8 +484,12 @@ def load_phantom(
 
 # %%
 if __name__ == "__main__":
+    import _paths
+
     phantom, phantom_data, tissue_masks = load_phantom(
-        json_path=r'C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\brainweb_phantoms\brainweb-subj04\brainweb-subj04-3T.json',
+        json_path=str(
+            _paths.PHANTOMS_DIR_PATH / "brainweb-subj04" / "brainweb-subj04-3T.json"
+        ),
         resolution_mm=2.333333333333333,
         fov_mm=224.0,
         slice_idx=None,

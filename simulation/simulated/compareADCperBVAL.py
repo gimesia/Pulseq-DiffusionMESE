@@ -1,6 +1,7 @@
 # %%
 import os
 import re
+from pathlib import Path
 import numpy as np
 import nibabel as nib
 import matplotlib
@@ -14,8 +15,11 @@ from collections import defaultdict
 import matplotlib.cm as cm
 
 # ---- Config ----
-IMG_DIR = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\diff_img"
-FIGS_DIR = r"C:\Users\User\OneDrive\PhD\Sumbission\ESMRMB26\Pulseq-DiffusionMESE\simulation\simulated\figs"
+# Resolved relative to this file (simulation/simulated/) so the script
+# works after any clone, regardless of where the repo lives on disk.
+_HERE = Path(__file__).resolve().parent
+IMG_DIR = _HERE / "diff_img"
+FIGS_DIR = _HERE / "figs"
 
 OUTPUT_PATH = os.path.join(FIGS_DIR, "ADC_estimation_comparison.png")
 

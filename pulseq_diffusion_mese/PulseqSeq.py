@@ -151,6 +151,10 @@ class PulseqSeq(ABC):
         self.name = name
         self.system_type = system_type
         self.save_dir = save_dir
+        # save_dir may be a custom, not-yet-existing path (unlike
+        # DEFAULT_SAVE_DIR, which is created at import time above) —
+        # create it now so write() doesn't fail with FileNotFoundError.
+        os.makedirs(self.save_dir, exist_ok=True)
         self.init_message()
 
     def _init_system(self, system_type):
