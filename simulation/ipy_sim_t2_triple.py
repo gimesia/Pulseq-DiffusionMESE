@@ -13,6 +13,8 @@ import MRzeroCore as mr0
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
+from cmcrameri import cm
 import nibabel as nib
 
 from pypulseq import Sequence
@@ -299,10 +301,37 @@ for method in ["nlls", "loglinear"]:
     t2_result = create_t2_map(images_stack, te_sorted, method=method)
     ims.append(t2_result[0])
 
+# T2 colour convention (ISMRM QMR Study Group Color Recommendation
+# Committee, Fuderer/Wichtmann/Crameri et al., MRM 2025;93:490-506):
+# perceptually-uniform `navia` on a log scale. Background/rejected
+# voxels (T2 <= 0, see create_t2_map's implausible-fit rejection) are
+# masked and rendered black rather than folded into the log scale,
+# since log(0) is undefined.
+# vmin=10 ms is a placeholder floor for the log scale (chosen to sit
+# below in-vivo brain WM/GM at 3T without being so low that noise-floor
+# voxels dominate the low end) — flagged for review rather than a
+# silent choice. vmax is tied to the reference T2 map's own max (see
+# vmax_shared below), matching the linear-scale convention already
+# used by the comparison plot two cells down.
+T2_LOG_VMIN_MS = 10.0
+navia_bad = cm.navia.copy()
+navia_bad.set_bad("black")
+
+# Shared vmax across every T2 panel in this notebook, tied to the
+# reference map's own (physically plausible) T2 range — computed here
+# (rather than only where the reference is first plotted) so this
+# 2-panel comparison uses the same scale as the 3-panel one below.
+vmax_shared = float(np.asarray(T2).max())
+
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
 titles = ["NLLS Fit", "Log-Linear Fit"]
 for i, ax in enumerate(axs):
-    im = ax.imshow(np.rot90(ims[i], -1 if i < 2 else 1), cmap="viridis")
+    im_data_ms = np.rot90(ims[i], -1 if i < 2 else 1)
+    im_data_ms = np.ma.masked_where(im_data_ms <= 0, im_data_ms)
+    im = ax.imshow(
+        im_data_ms, cmap=navia_bad,
+        norm=LogNorm(vmin=T2_LOG_VMIN_MS, vmax=vmax_shared * 1000),
+    )
     ax.set_title(titles[i])
     fig.colorbar(im, ax=ax, label="T2 (ms)")
 plt.tight_layout()
@@ -325,20 +354,24 @@ ims2 = [*ims, T2]
 # Save ims2[0] to file for later use
 
 # Shared colour scale across all three panels, tied to the reference
-# map's own (physically plausible) T2 range. Without this each panel
-# auto-scales to its own data max, so panels aren't actually
-# comparable — a handful of outlier voxels in one fit would silently
-# rescale that panel's colours relative to the other two. The pixels
-# this clips are inspected in the next cell.
-vmax_shared = float(np.asarray(T2).max())
-
+# map's own (physically plausible) T2 range (already computed above as
+# vmax_shared, in seconds). Without this each panel auto-scales to its
+# own data max, so panels aren't actually comparable — a handful of
+# outlier voxels in one fit would silently rescale that panel's colours
+# relative to the other two. The pixels this clips are inspected in the
+# next cell. navia/log-scale per the ISMRM QMR Study Group Color
+# Recommendation Committee (see note above); background/rejected voxels
+# (T2 <= 0) are masked black rather than folded into the log scale.
 for i, ax in enumerate(axs):
     if i < 2:
         im_data = np.rot90(ims2[i], -1) / 1000
     else:
         im_data = np.rot90(ims2[i], -1)
-    ims2[i] = im_data  # save for later
-    im = ax.imshow(im_data, cmap="viridis", vmin=0, vmax=vmax_shared)
+    ims2[i] = im_data  # save for later (unmasked — QC cell below needs raw values)
+    im = ax.imshow(
+        np.ma.masked_where(im_data <= 0, im_data), cmap=navia_bad,
+        norm=LogNorm(vmin=T2_LOG_VMIN_MS / 1000, vmax=vmax_shared),
+    )
     ax.set_title(titles[i])
     ax.set_axis_off()
     fig.colorbar(im, ax=ax, label="T2 (s)")

@@ -13,6 +13,8 @@ import MRzeroCore as mr0
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
+from cmcrameri import cm
 import nibabel as nib
 
 from pypulseq import Sequence
@@ -293,11 +295,31 @@ ims = []
 for i in ["nlls", "loglinear"]:
     t2_result = create_t2_map(reconstructed_b0_magnitude_images, TEs, method=i)
     ims.append(t2_result[0])
+
+# T2 colour convention (ISMRM QMR Study Group Color Recommendation
+# Committee, Fuderer/Wichtmann/Crameri et al., MRM 2025;93:490-506):
+# perceptually-uniform `navia` on a log scale. Background/rejected
+# voxels (T2 <= 0) are masked and rendered black rather than folded
+# into the log scale, since log(0) is undefined. vmin=10 ms is a
+# placeholder floor (below in-vivo brain WM/GM at 3T, above the
+# noise-floor voxels) — flagged for review rather than a silent
+# choice. vmax is tied to the reference T2 map's own max, shared with
+# the comparison plot below.
+T2_LOG_VMIN_MS = 10.0
+navia_bad = cm.navia.copy()
+navia_bad.set_bad("black")
+vmax_shared = float(np.asarray(T2).max())
+
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
 titles = ["NLLS Fit", "Log-Linear Fit"]
 
 for i, ax in enumerate(axs):
-    im = ax.imshow(np.rot90(ims[i], -1 if i < 2 else 1), cmap="viridis")
+    im_data_ms = np.rot90(ims[i], -1 if i < 2 else 1)
+    im_data_ms = np.ma.masked_where(im_data_ms <= 0, im_data_ms)
+    im = ax.imshow(
+        im_data_ms, cmap=navia_bad,
+        norm=LogNorm(vmin=T2_LOG_VMIN_MS, vmax=vmax_shared * 1000),
+    )
     ax.set_title(titles[i])
     fig.colorbar(im, ax=ax, label="T2 (ms)")
 
@@ -313,16 +335,17 @@ ims2 = [*ims, T2]
 # map's own T2 range (rather than a hardcoded constant, which would
 # silently go stale for a different phantom/slice). The pixels this
 # clips are inspected in the next cell.
-vmax_shared = float(np.asarray(T2).max())
-
 for i, ax in enumerate(axs):
     if i < 2:
         im = np.rot90(ims2[i], -1)
         im = im / 1000
     else:
         im = np.rot90(ims2[i], -1)
-    ims2[i] = im  # save for later
-    im = ax.imshow(im, cmap="viridis", vmin=0, vmax=vmax_shared)
+    ims2[i] = im  # save for later (unmasked — QC cell below needs raw values)
+    im = ax.imshow(
+        np.ma.masked_where(im <= 0, im), cmap=navia_bad,
+        norm=LogNorm(vmin=T2_LOG_VMIN_MS / 1000, vmax=vmax_shared),
+    )
     ax.set_title(titles[i])
     fig.colorbar(im, ax=ax, label="T2 (s)")
 plt.tight_layout()

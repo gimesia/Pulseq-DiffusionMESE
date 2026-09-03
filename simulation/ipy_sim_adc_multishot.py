@@ -13,6 +13,7 @@ import MRzeroCore as mr0
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+from cmcrameri import cm
 import nibabel as nib
 
 from pypulseq import Sequence
@@ -322,7 +323,7 @@ fig, axs = plt.subplots(1, 2, figsize=(12, 6))
 titles = ["NLLS Fit", "Log-Linear Fit"]
 for i, adc in enumerate([adc_nlls, adc_ll]):
 
-    im = axs[i].imshow(np.rot90(adc, -1) * 1e3, cmap="viridis")
+    im = axs[i].imshow(np.rot90(adc, -1) * 1e3, cmap=cm.turku)
     axs[i].set_title(titles[i])
     axs[i].set_axis_off()
     fig.colorbar(im, ax=axs[i], label="ADC (x10⁻³ mm²/s)")
@@ -399,9 +400,9 @@ D_ref = np.rot90(D, -1)
 vmax_shared = float(np.asarray(D_ref).max())
 
 ims_data = [
-    (np.rot90(adc_nlls, -1) * 1e3, "NLLS ADC", "viridis"),
-    (np.rot90(adc_ll, -1) * 1e3, "Log-Linear ADC", "viridis"),
-    (D_ref, "Reference D map", "viridis"),
+    (np.rot90(adc_nlls, -1) * 1e3, "NLLS ADC", cm.turku),
+    (np.rot90(adc_ll, -1) * 1e3, "Log-Linear ADC", cm.turku),
+    (D_ref, "Reference D map", cm.turku),
 ]
 for ax, (im_data, title, cmap) in zip(axs, ims_data):
     im = ax.imshow(im_data, cmap=cmap, vmin=0, vmax=vmax_shared)
