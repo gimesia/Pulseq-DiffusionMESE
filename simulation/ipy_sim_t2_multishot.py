@@ -219,20 +219,49 @@ fig.suptitle(
 )
 titles = ["NLLS Fit", "Log-Linear Fit", "Reference T2 map"]
 ims2 = [*ims, T2]
+
+# Shared colour scale across all three panels, tied to the reference
+# map's own T2 range (rather than a hardcoded constant, which would
+# silently go stale for a different phantom/slice). The pixels this
+# clips are inspected in the next cell.
+vmax_shared = float(np.asarray(T2).max())
+
 for i, ax in enumerate(axs):
     if i < 2:
-        im_data = np.rot90(ims2[i], 0) / 1000
-        im_data = np.fliplr(im_data)  # flip horizontally to match ref orientation
+        im_data = np.rot90(ims2[i], -1) / 1000
     else:
-        im_data = np.rot90(ims2[i], 1)
+        im_data = np.rot90(ims2[i], -1)
     ims2[i] = im_data  # save for later
     im = ax.imshow(
         im_data,
         cmap="viridis",
+        vmin=0,
+        vmax=vmax_shared,
     )
     ax.set_title(titles[i])
     ax.set_axis_off()
     fig.colorbar(im, ax=ax, label="T2 (s)")
+plt.tight_layout()
+plt.show()
+
+# %% ==============================================================================
+#   QC: pixels clipped by the shared colour scale above
+# =================================================================================
+# Distinct from the implausible-fit rejection already done inside
+# create_t2_map (see utils_relaxometry.py): those voxels are zeroed at
+# the source and don't show up here. This is the remainder —
+# legitimate, non-zero fitted T2 values that simply exceed the
+# reference map's max and get visually saturated to the top colour of
+# vmax_shared above.
+fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+for ax, im_data, title in zip(axs, ims2[:2], titles[:2]):
+    clipped = im_data > vmax_shared
+    n_clipped = int(clipped.sum())
+    n_fitted = int((im_data > 0).sum())
+    pct = 100 * n_clipped / n_fitted if n_fitted else 0.0
+    ax.imshow(clipped, cmap="Reds", vmin=0, vmax=1)
+    ax.set_title(f"{title}: {n_clipped}/{n_fitted} px clipped ({pct:.1f}%)")
+    ax.set_axis_off()
 plt.tight_layout()
 plt.show()
 

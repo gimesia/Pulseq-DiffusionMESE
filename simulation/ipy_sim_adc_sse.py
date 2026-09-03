@@ -346,7 +346,7 @@ print(
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
 titles = ["NLLS Fit", "Log-Linear Fit"]
 for i, adc in enumerate([adc_nlls, adc_ll]):
-    im = axs[i].imshow(adc * 1e3, cmap="viridis")
+    im = axs[i].imshow(np.rot90(adc, -1) * 1e3, cmap="viridis")
     axs[i].set_title(titles[i])
     axs[i].set_axis_off()
     fig.colorbar(im, ax=axs[i], label="ADC (x10⁻³ mm²/s)")
@@ -389,7 +389,7 @@ print(
 )
 
 fig, axs = plt.subplots(1, 2, figsize=(12, 6))
-im = axs[0].imshow((md_map) * 1e3, cmap="viridis")
+im = axs[0].imshow(np.rot90(md_map, -1) * 1e3, cmap="viridis")
 axs[0].set_title("Mean Diffusivity (MD)")
 axs[0].set_axis_off()
 fig.colorbar(im, ax=axs[0], label="MD (x10⁻³ mm²/s)")
@@ -397,7 +397,7 @@ fig.colorbar(im, ax=axs[0], label="MD (x10⁻³ mm²/s)")
 # Auto-scale FA vmax to the 99th percentile of brain voxels — avoids hot-spot
 # pixels from dominating the colormap, and matches what a clinical viewer does.
 fa_vmax = np.percentile(fa_brain, 99) if brain_mask_md.any() else 0.1
-im = axs[1].imshow((fa_map), cmap="inferno", vmin=0, vmax=fa_vmax)
+im = axs[1].imshow(np.rot90(fa_map, -1), cmap="inferno", vmin=0, vmax=fa_vmax)
 axs[1].set_title(f"Fractional Anisotropy (FA)  [vmax={fa_vmax:.3f}]")
 axs[1].set_axis_off()
 fig.colorbar(im, ax=axs[1], label="FA")
@@ -413,16 +413,46 @@ plt.show()
 # ==============================================================================
 fig, axs = plt.subplots(1, 3, figsize=(18, 6))
 fig.suptitle("Diffusion SE Multishot ADC vs Reference")
+
+# Shared colour scale across all three panels, tied to the reference
+# D map's own range (rather than a hardcoded constant, which would
+# silently go stale for a different phantom/slice). D and the fitted
+# ADC maps are both already in x10⁻³ mm²/s at this point. The pixels
+# this clips are inspected in the next cell.
+D_ref = np.rot90(D, -1)
+vmax_shared = float(np.asarray(D_ref).max())
+
 ims_data = [
     (np.rot90(adc_nlls, -1) * 1e3, "NLLS ADC", "viridis"),
     (np.rot90(adc_ll, -1) * 1e3, "Log-Linear ADC", "viridis"),
-    (np.rot90(D, 1), "|Reference D map", "viridis"),
+    (D_ref, "Reference D map", "viridis"),
 ]
 for ax, (im_data, title, cmap) in zip(axs, ims_data):
-    im = ax.imshow(im_data, cmap=cmap)
+    im = ax.imshow(im_data, cmap=cmap, vmin=0, vmax=vmax_shared)
     ax.set_title(title)
     ax.set_axis_off()
     fig.colorbar(im, ax=ax, label="ADC (x10⁻³ mm²/s)")
+plt.tight_layout()
+plt.show()
+
+# %% ==============================================================================
+#   QC: pixels clipped by the shared colour scale above
+# =================================================================================
+# Distinct from the implausible-fit rejection already done inside
+# create_adc_map (see utils_diffusion.py): those voxels are zeroed at
+# the source and don't show up here. This is the remainder —
+# legitimate, non-zero fitted ADC values that simply exceed the
+# reference map's max and get visually saturated to the top colour of
+# vmax_shared above.
+fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+for ax, (im_data, title, _cmap) in zip(axs, ims_data[:2]):
+    clipped = im_data > vmax_shared
+    n_clipped = int(clipped.sum())
+    n_fitted = int((im_data > 0).sum())
+    pct = 100 * n_clipped / n_fitted if n_fitted else 0.0
+    ax.imshow(clipped, cmap="Reds", vmin=0, vmax=1)
+    ax.set_title(f"{title}: {n_clipped}/{n_fitted} px clipped ({pct:.1f}%)")
+    ax.set_axis_off()
 plt.tight_layout()
 plt.show()
 

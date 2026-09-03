@@ -397,7 +397,15 @@ fig.suptitle("Triple SE ADC (all echoes combined) vs Reference")
 
 adc_nlls = np.rot90(adc_nlls, -1) * 1e3
 adc_ll = np.rot90(adc_ll, -1) * 1e3
-adc_ref = np.rot90(D, 1)
+adc_ref = np.rot90(D, -1)
+
+# Shared colour scale across all three panels, tied to the reference
+# D map's own range (rather than a hardcoded constant, which would
+# silently go stale for a different phantom/slice). D and the fitted
+# ADC maps are both already in x10⁻³ mm²/s at this point. The pixels
+# this clips are inspected in the next cell.
+vmax_shared = float(np.asarray(adc_ref).max())
+
 ims_data = [
     (adc_nlls, "NLLS (all echoes)", "ADC (x10⁻³ mm²/s)", "viridis"),
     (
@@ -409,10 +417,31 @@ ims_data = [
     (adc_ref, "Reference D map", "D (x10⁻³ mm²/s)", "viridis"),
 ]
 for ax, (im_data, title, label, cmap) in zip(axs, ims_data):
-    im = ax.imshow(im_data, cmap=cmap, vmax=3.1)  # ADC values are typically in the range of 0-3 x10⁻³ mm²/s
+    im = ax.imshow(im_data, cmap=cmap, vmin=0, vmax=vmax_shared)
     ax.set_title(title)
     ax.set_axis_off()
     fig.colorbar(im, ax=ax, label=label)
+plt.tight_layout()
+plt.show()
+
+# %% ==============================================================================
+#   QC: pixels clipped by the shared colour scale above
+# =================================================================================
+# Distinct from the implausible-fit rejection already done inside
+# create_adc_map (see utils_diffusion.py): those voxels are zeroed at
+# the source and don't show up here. This is the remainder —
+# legitimate, non-zero fitted ADC values that simply exceed the
+# reference map's max and get visually saturated to the top colour of
+# vmax_shared above.
+fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+for ax, (im_data, title, _label, _cmap) in zip(axs, ims_data[:2]):
+    clipped = im_data > vmax_shared
+    n_clipped = int(clipped.sum())
+    n_fitted = int((im_data > 0).sum())
+    pct = 100 * n_clipped / n_fitted if n_fitted else 0.0
+    ax.imshow(clipped, cmap="Reds", vmin=0, vmax=1)
+    ax.set_title(f"{title}: {n_clipped}/{n_fitted} px clipped ({pct:.1f}%)")
+    ax.set_axis_off()
 plt.tight_layout()
 plt.show()
 

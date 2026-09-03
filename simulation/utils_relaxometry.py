@@ -32,6 +32,22 @@ Two estimators are provided:
    typically halves the iteration count and avoids local minima in
    long-T2 voxels (e.g. CSF).
 
+Both estimators reject implausible fits to 0 rather than reporting a
+saturated/cosmetic number:
+
+- `t2_loglinear` zeroes non-decaying voxels (slope >= 0, i.e. T2 =
+  +inf) *and* voxels whose fitted T2 exceeds `t2_max` — a near-zero
+  negative slope inflates T2 arbitrarily far, and nothing past
+  `t2_max` (default 3000 ms) is plausible in-vivo brain tissue at 3T.
+- `t2_nlls` fits with `scipy.optimize.least_squares` (not the
+  `curve_fit` wrapper) specifically so it can inspect
+  `result.active_mask`: a fit pinned at the upper `t2_bounds` edge
+  means the optimizer wanted to go higher and got stopped by the
+  constraint, not that `t2_bounds[1]` is a real measurement. Clipping
+  that to the bound would silently draw a false value at exactly the
+  cap; this rejects it to 0 instead, the same reasoning `t2_loglinear`
+  applies to its own out-of-range fits.
+
 The acquisition assumptions are the same as for any spin-echo T2
 fit: TR long compared to tissue T1, no diffusion weighting (b = 0),
 and no stimulated-echo contamination. Violations bias the recovered
@@ -41,7 +57,7 @@ T2; they do not produce obvious failure modes.
 from __future__ import annotations
 
 import numpy as np
-from scipy.optimize import curve_fit
+from scipy.optimize import least_squares
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +91,18 @@ def mono_exponential(te, s0, t2):
     toward longer T2.
     """
     return s0 * np.exp(-te / t2)
+
+
+def _mono_exponential_residual(params, te, signal):
+    """Residual vector `model(te; params) - signal` for `least_squares`.
+
+    A thin wrapper around `mono_exponential` so `t2_nlls` can call
+    `scipy.optimize.least_squares` directly (instead of the `curve_fit`
+    convenience wrapper) and read back `result.active_mask` — see the
+    "Implausible long T2" reasoning in the module docstring.
+    """
+    s0, t2 = params
+    return mono_exponential(te, s0, t2) - signal
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +139,7 @@ def _build_mask(data, mask_threshold_frac):
 # ---------------------------------------------------------------------------
 # Log-linear estimator (vectorised)
 # ---------------------------------------------------------------------------
-def t2_loglinear(data, te_list, mask_threshold_frac=0.15, eps=1e-12):
+def t2_loglinear(data, te_list, mask_threshold_frac=0.15, eps=1e-12, t2_max=3000.0):
     """
     Vectorised log-linear T2 fit across all pixels at once.
 
@@ -138,12 +166,18 @@ def t2_loglinear(data, te_list, mask_threshold_frac=0.15, eps=1e-12):
     eps : float, optional
         Floor applied before taking the logarithm to avoid `log(0)`.
         Should be small relative to the noise floor. Default 1e-12.
+    t2_max : float, optional
+        Upper plausibility ceiling on T2, in milliseconds. Default
+        3000 ms comfortably contains in-vivo brain CSF at 3T (~2000
+        ms). Fits above it are rejected (see "Implausible long T2"
+        below), not clipped to this value.
 
     Returns
     -------
     t2_map : ndarray, shape (ny, nx)
         T2 in milliseconds. Voxels with non-physical (non-decaying)
-        signals or below the mask threshold are set to 0.
+        signals, implausibly long fitted T2 (see below), or below the
+        mask threshold are set to 0.
     s0_map : ndarray, shape (ny, nx)
         S0 in arbitrary input units (same as `data`).
 
@@ -161,6 +195,16 @@ def t2_loglinear(data, te_list, mask_threshold_frac=0.15, eps=1e-12):
         recovery would be physically meaningless) yields a
         non-negative slope. These are zeroed in the output rather
         than reported as `inf` or negative T2.
+
+    Implausible long T2
+        A slope that is negative but very close to zero (e.g. a
+        near-flat, low-SNR decay) inverts to a T2 of many seconds —
+        not a real long-T2 tissue, just noise dominating a
+        numerically unstable division. Rather than let a handful of
+        such voxels blow out any downstream colour scale or summary
+        statistic, fits with `T2 > t2_max` are rejected to 0, the
+        same treatment already given to non-decaying (slope >= 0)
+        voxels above.
     """
     data = np.asarray(data, dtype=float)
     te = np.asarray(te_list, dtype=float)
@@ -191,6 +235,12 @@ def t2_loglinear(data, te_list, mask_threshold_frac=0.15, eps=1e-12):
     t2_map[valid] = -1.0 / slope[valid]
     s0_map[valid] = np.exp(intercept[valid])
 
+    # Reject implausibly long T2 (see "Implausible long T2" above)
+    # rather than letting it stand as a cosmetic-looking number.
+    implausible = valid & (t2_map > t2_max)
+    t2_map[implausible] = 0.0
+    s0_map[implausible] = 0.0
+
     return t2_map, s0_map
 
 
@@ -201,7 +251,7 @@ def t2_nlls(
     data,
     te_list,
     mask_threshold_frac=0.1,
-    t2_bounds=(0.0, 3.0),
+    t2_bounds=(0.0, 3000.0),
     init=None,
     maxfev=200,
 ):
@@ -234,26 +284,40 @@ def t2_nlls(
         with custom initialisation.
     maxfev : int, optional
         Maximum function evaluations per pixel passed to
-        `curve_fit`. Default 200 is plenty for warm-started fits;
-        raise it if you see widespread non-convergence.
+        `least_squares` (as `max_nfev`). Default 200 is plenty for
+        warm-started fits; raise it if you see widespread
+        non-convergence.
 
     Returns
     -------
     t2_map : ndarray, shape (ny, nx)
-        T2 in milliseconds. Pixels where the fit failed fall back to
-        the log-linear estimate (so the map is never sparser than the
-        warm-start map).
+        T2 in milliseconds. Pixels where the fit failed to converge
+        fall back to the log-linear estimate (so the map is never
+        sparser than the warm-start map); pixels whose fit is pinned
+        at the upper `t2_bounds` edge are rejected to 0 (see
+        "Bound-pinned rejection" below).
     s0_map : ndarray, shape (ny, nx)
-        S0 in input units, with the same fallback behaviour.
+        S0 in input units, with the same fallback/rejection behaviour.
 
     Notes
     -----
-    Fallback strategy
-        If `curve_fit` raises (`RuntimeError` for non-convergence,
-        `ValueError` for malformed bounds), the voxel keeps its
+    Fallback strategy (non-convergence)
+        If `least_squares` fails to converge, the voxel keeps its
         log-linear estimate rather than being zeroed. This trades a
         bit of accuracy for spatial coverage and avoids speckled
         holes in noisy regions.
+
+    Bound-pinned rejection (implausible fit)
+        A converged fit sitting exactly at `t2_bounds[1]` did not
+        find an interior optimum — the optimizer wanted to keep
+        going and was stopped by the constraint. Reporting that as
+        the voxel's T2 would draw a false, cosmetically-capped value
+        (and would also blow out any downstream shared colour
+        scale). `result.active_mask` says explicitly when this
+        happened, so these voxels are rejected to 0 instead of kept
+        — the same reasoning `t2_loglinear` uses to reject its own
+        implausibly long fits, applied here via the optimizer's own
+        constraint-activity report rather than a magnitude threshold.
 
     Performance
         Roughly 1-10 ms per voxel depending on TE count and machine.
@@ -288,24 +352,38 @@ def t2_nlls(
 
     ys, xs = np.where(mask)
     for y, x in zip(ys, xs):
-        # Clip the warm-start T2 into the bound range so curve_fit
+        # Clip the warm-start T2 into the bound range so least_squares
         # does not reject the initial guess outright.
         t2_guess = np.clip(t2_init[y, x] or 50.0, t2_lo + 1e-6, t2_hi - 1e-6)
         s0_guess = s0_init[y, x] or data[0, y, x]
 
         try:
-            popt, _ = curve_fit(
-                mono_exponential,
-                te,
-                data[:, y, x],
-                p0=[s0_guess, t2_guess],
-                bounds=(t2_lo, [np.inf, t2_hi]),
-                maxfev=maxfev,
+            result = least_squares(
+                _mono_exponential_residual,
+                x0=[s0_guess, t2_guess],
+                args=(te, data[:, y, x]),
+                bounds=([t2_lo, t2_lo], [np.inf, t2_hi]),
+                max_nfev=maxfev,
             )
-            s0_map[y, x], t2_map[y, x] = popt
         except (RuntimeError, ValueError):
             # Keep the log-linear fallback already in the output maps.
             continue
+
+        if not result.success:
+            # Non-convergence: keep the log-linear fallback.
+            continue
+
+        if result.active_mask[1] > 0:
+            # Pinned at the upper T2 bound — the optimizer wanted to
+            # go higher and was stopped by the constraint, so this is
+            # not a real measurement. Reject it outright (see
+            # "Bound-pinned rejection" above) rather than reporting
+            # t2_bounds[1] back as if it were the fitted value.
+            t2_map[y, x] = 0.0
+            s0_map[y, x] = 0.0
+            continue
+
+        s0_map[y, x], t2_map[y, x] = result.x
 
     return t2_map, s0_map
 

@@ -30,19 +30,33 @@ ADC, not mean diffusivity.
 
 Two fitters
 -----------
-- ``nlls``      : scipy.optimize.curve_fit on the exponential. Naturally
+- ``nlls``      : scipy.optimize.least_squares on the exponential. Naturally
                   bounded and robust to Gaussian-like noise.
 - ``loglinear`` : ordinary least squares on ln(S) = ln(S0) - b * ADC.
                   Closed form and very fast, but heteroscedastic in the
                   original signal domain - the log transform over-weights
                   low-SNR high-b points, biasing ADC upward at low SNR.
                   Useful as a sanity check or as initialization for NLLS.
+
+Both fitters *reject* physically implausible fits to 0 rather than report
+a saturated/cosmetic number (mirrors ``utils_relaxometry.py``'s T2
+estimators, adjusted for ADC's own units and range):
+
+- ``loglinear`` defaults ``adc_max`` to 5e-3 mm^2/s (free water at 37 C is
+  ~3e-3; this leaves headroom without being unbounded) instead of
+  ``np.inf``. A near-zero fitted slope otherwise inverts to an arbitrarily
+  large ADC, and an unbounded default silently let that stand.
+- ``nlls`` fits with ``scipy.optimize.least_squares`` (not the
+  ``curve_fit`` wrapper) so it can inspect ``result.active_mask``: a fit
+  pinned at the upper ``adc_max`` bound means the optimizer wanted to go
+  higher and was stopped by the constraint, not that ``adc_max`` is a real
+  measurement. That gets rejected to 0 rather than clipped to the bound.
 """
 
 from __future__ import annotations
 
 import numpy as np
-from scipy.optimize import curve_fit
+from scipy.optimize import least_squares
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +68,17 @@ def stejskal_tanner(b, s0, adc):
     S(b) = S0 * exp(-b * ADC)
     """
     return s0 * np.exp(-b * adc)
+
+
+def _stejskal_tanner_residual(params, b, signal):
+    """Residual vector `model(b; params) - signal` for `least_squares`.
+
+    Lets `_fit_adc_nlls` call `scipy.optimize.least_squares` directly
+    (instead of the `curve_fit` convenience wrapper) and read back
+    `result.active_mask` — see the module docstring's rejection notes.
+    """
+    s0, adc = params
+    return stejskal_tanner(b, s0, adc) - signal
 
 
 # ---------------------------------------------------------------------------
@@ -75,14 +100,31 @@ def _fit_adc_nlls(data, b_values, threshold_frac=0.1, adc_init=1e-3, adc_max=5e-
         Initial guess for ADC in mm^2/s. 1e-3 ≈ typical brain parenchyma.
     adc_max : float
         Upper bound on ADC. Free water at 37 °C is ~3e-3 mm^2/s, so 5e-3
-        is a safe physiological ceiling.
+        is a safe physiological ceiling. A fit that converges pinned at
+        this bound is rejected to 0 rather than reported as the bound
+        value — see "Bound-pinned rejection" below.
 
     Returns
     -------
     adc_map : (ny, nx) ndarray
-        ADC in mm^2/s. Background and failed-fit voxels are 0.
+        ADC in mm^2/s. Background voxels, non-converged fits, and fits
+        pinned at ``adc_max`` are all 0.
     s0_map : (ny, nx) ndarray
-        Fitted S0.
+        Fitted S0, with the same zeroing.
+
+    Notes
+    -----
+    Bound-pinned rejection
+        A converged fit sitting exactly at ``adc_max`` did not find an
+        interior optimum — the optimizer wanted to keep going and was
+        stopped by the constraint. Reporting that as the voxel's ADC
+        would draw a false, cosmetically-capped value (and would blow
+        out any downstream shared colour scale). `least_squares`'s
+        `result.active_mask` says explicitly when this happened, so
+        these voxels are rejected to 0 instead of kept — the same
+        reasoning `_fit_adc_loglinear` uses for its own out-of-range
+        fits, applied here via the optimizer's own constraint-activity
+        report rather than a magnitude threshold.
     """
     n_b, ny, nx = data.shape
     adc_map = np.zeros((ny, nx))
@@ -108,22 +150,30 @@ def _fit_adc_nlls(data, b_values, threshold_frac=0.1, adc_init=1e-3, adc_max=5e-
                 continue
 
             try:
-                popt, _ = curve_fit(
-                    stejskal_tanner,
-                    b_arr,
-                    pixel_series,
-                    p0=[pixel_series[b0_idx], adc_init],
-                    bounds=(0, [np.inf, adc_max]),
+                result = least_squares(
+                    _stejskal_tanner_residual,
+                    x0=[pixel_series[b0_idx], adc_init],
+                    args=(b_arr, pixel_series),
+                    bounds=([0, 0], [np.inf, adc_max]),
                 )
-                s0_map[y, x], adc_map[y, x] = popt
-            except Exception:
+            except (RuntimeError, ValueError):
                 # Non-convergent fit - leave this voxel as 0.
                 continue
+
+            if not result.success:
+                continue
+
+            if result.active_mask[1] > 0:
+                # Pinned at the upper ADC bound — not a real
+                # measurement (see "Bound-pinned rejection" above).
+                continue
+
+            s0_map[y, x], adc_map[y, x] = result.x
 
     return adc_map, s0_map
 
 
-def _fit_adc_loglinear(data, b_values, threshold_frac=0.1, adc_min = 0.0, adc_max = np.inf):
+def _fit_adc_loglinear(data, b_values, threshold_frac=0.1, adc_min=0.0, adc_max=5e-3):
     """Vectorised log-linear ADC fit: ln(S) = ln(S0) - b * ADC.
 
     Closed-form OLS over all voxels at once - much faster than NLLS but
@@ -139,9 +189,14 @@ def _fit_adc_loglinear(data, b_values, threshold_frac=0.1, adc_min = 0.0, adc_ma
     threshold_frac : float
         Background mask threshold on the b=0 image.
     adc_min : float
-        Lower bound on ADC.
+        Lower bound on ADC. Negative ADCs are a noise artefact, not a
+        real measurement (signal that appears to *increase* with b).
     adc_max : float
-        Upper bound on ADC.
+        Upper (physical-plausibility) bound on ADC, in mm^2/s. Default
+        5e-3 matches `_fit_adc_nlls`'s default — free water at 37 °C is
+        ~3e-3 mm^2/s. A near-zero fitted slope inverts to an arbitrarily
+        large ADC; voxels past this ceiling are rejected to 0 rather
+        than reported, same as `adc_min`'s negative-slope rejection.
 
     Returns
     -------
@@ -177,10 +232,12 @@ def _fit_adc_loglinear(data, b_values, threshold_frac=0.1, adc_min = 0.0, adc_ma
     s0_map = np.exp(ln_s0)
     adc_map = adc
 
-    # Apply the background mask and clamp to physiological range. Negative
-    # ADCs are an artefact of noise-dominated voxels and are zeroed here
-    # rather than left as garbage, matching how the NLLS path handles
-    # failed fits.
+    # Apply the background mask and reject fits outside the physiological
+    # range (zeroed, not clamped/clipped to the bound — see adc_max's
+    # docstring). Negative ADCs are an artefact of noise-dominated voxels;
+    # implausibly large ones come from a near-zero fitted slope inverting
+    # to a huge value. Both are zeroed here rather than left as garbage,
+    # matching how the NLLS path rejects its own out-of-range fits.
     adc_map = np.where(mask, adc_map, 0.0)
     adc_map = np.where((adc_map < adc_min) | (adc_map > adc_max), 0.0, adc_map)
     s0_map = np.where(mask, s0_map, 0.0)

@@ -59,7 +59,9 @@ Key simulation scripts:
 **Fitting** is implemented with two methods for robustness:
 
 - **Log-linear** (OLS on ln(S)): fast, vectorized, biased at low SNR
-- **NLLS** (`scipy.optimize.curve_fit` per voxel): unbiased, warm-started from log-linear, with fallback on non-convergence
+- **NLLS** (`scipy.optimize.least_squares` per voxel): unbiased. For T2 (`utils_relaxometry.py`) it's warm-started from the log-linear estimate, with fallback to that estimate on non-convergence; for ADC (`utils_diffusion.py`) it fits from a fixed initial guess (no per-voxel warm start), leaving a voxel at 0 on non-convergence.
+
+Both `utils_relaxometry.py` (T2) and `utils_diffusion.py` (ADC) apply the same *rejection* philosophy: physically implausible fits are zeroed rather than reported as a saturated/cosmetic number. Log-linear zeroes any fit past a plausibility ceiling (`t2_max` / `adc_max`) — a near-zero slope otherwise inverts to an arbitrarily large T2 or ADC. NLLS checks `least_squares`'s `result.active_mask` to reject fits pinned at the upper bound (`t2_bounds[1]` / `adc_max`) — a bound-pinned optimum means the constraint stopped the search, not that the bound is a real measurement.
 
 **EPI reconstruction** handles ramp-sampled k-space (non-Cartesian during trapezoid ramps) via NUFFT, and includes navigator-based Nyquist ghost correction.
 
