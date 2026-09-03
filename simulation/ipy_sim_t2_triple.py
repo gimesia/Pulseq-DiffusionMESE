@@ -51,6 +51,7 @@ SEQUENCES_DIR_PATH = _paths.SIMULATION_DIR / "simulated" / "seq"
 VOLUMES_DIR_PATH = _paths.SIMULATION_DIR / "simulated" / "brainmaps"
 PHANTOMS_DIR_PATH = _paths.PHANTOMS_DIR_PATH
 ECHO_IMAGES_DIR_PATH = _paths.SIMULATION_DIR / "simulated" / "t2_img"
+os.makedirs(ECHO_IMAGES_DIR_PATH, exist_ok=True)
 
 # %% ==============================================================================
 #   Simulation parameters
