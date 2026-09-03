@@ -184,7 +184,14 @@ def run_adc_sse(
                 density=True,
             )
             kspace_tensor = torch.from_numpy(dir_signal[d]).to(torch.complex64)
-            img_complex = nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy().T
+            # No `.T`: an untransposed nufft_op.adj_op() output already
+            # lands on the same array grid as the phantom's own parameter
+            # maps (verified with a synthetic marker through this exact
+            # trajectory/operator pair). Transposing it here would
+            # silently misalign the saved/returned map relative to
+            # phantom.D — a reflection that rigid registration (see
+            # utils_sim_lib.mae_after_registration) cannot undo.
+            img_complex = nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy()
             recon_per_direction.append(img_complex)
 
         # (n_dirs, n_echoes=1, Ny, Nx)

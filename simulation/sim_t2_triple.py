@@ -198,7 +198,18 @@ def run_t2_triple(
                 density=True,
             )
             kspace_tensor = kspace_line.to(torch.complex64)
-            echo_imgs.append(nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy().T)
+            # No further orientation transform: an untransposed
+            # nufft_op.adj_op() output already lands on the same array
+            # grid as the phantom's own parameter maps (verified against
+            # phantom.T2/D directly with a synthetic marker through this
+            # exact trajectory/operator pair). Adding `.T` here previously
+            # broke that alignment — a reflection no downstream rigid
+            # registration (see utils_sim_lib.mae_after_registration) can
+            # undo — and the `rot90(flipud(...), 1)` this file used to
+            # apply before saving did not fix it either: composed with the
+            # stray `.T`, it nets out to a plain 180° rotation of the
+            # already-misaligned map, not a correction.
+            echo_imgs.append(nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy())
 
         for img, te_ms in zip(echo_imgs, (te1_ms, te2_ms, te3_ms)):
             mag_img = np.abs(img)
@@ -207,33 +218,37 @@ def run_t2_triple(
 
     order = np.argsort(all_echo_tes)
     images_stack = np.array(all_echo_images)[order]
-    te_sorted = np.array(all_echo_tes)[order] / 1000.0 # convert to seconds for T2 fitting
+    te_sorted_ms = np.array(all_echo_tes)[order]  # milliseconds, matching
+    # utils_relaxometry.create_t2_map's documented convention (and its
+    # t2_bounds/t2_max plausibility-rejection defaults, which are scaled
+    # for milliseconds). Converting to seconds before fitting — as this
+    # used to do — silently defeated that rejection: a 3000 ms ceiling
+    # becomes a 3000 SECOND ceiling once te is in seconds, so no fit is
+    # ever implausible enough to reject.
 
     # Stems may collide when TE2/TE3 (auto-computed) round to the same ms
     # across different TE1 values — disambiguate with a sequential suffix.
-    # te_sorted is in seconds (see /1000.0 above); convert back to ms for the
-    # stem so the filename matches the physical echo time.
     weighted_images: dict[str, np.ndarray] = {}
     _seen: dict[str, int] = {}
-    for i, te_s in enumerate(te_sorted):
-        base = f"T2w_TE{int(round(te_s * 1000.0))}_{blip_tag}"
+    for i, te_ms in enumerate(te_sorted_ms):
+        base = f"T2w_TE{int(round(te_ms))}_{blip_tag}"
         n = _seen.get(base, 0)
         stem = base if n == 0 else f"{base}_e{n}"
         _seen[base] = n + 1
         weighted_images[stem] = images_stack[i]
 
-    t2_nlls, _ = create_t2_map(images_stack, te_sorted, method="nlls")
-    t2_nlls_oriented = t2_nlls 
+    t2_nlls, _ = create_t2_map(images_stack, te_sorted_ms, method="nlls")
+    t2_nlls_oriented = t2_nlls / 1000.0  # ms -> s, to match phantom.T2's units
     if save_slice_npy:
         out_path = os.path.join(
             paths.volumes_dir, f"{paths.phantom_name}-T2_MSE_{blip_tag}.nii.gz"
         )
-        save_magnitude_nifti(np.rot90(np.flipud(t2_nlls_oriented), 1), out_path, res)
+        save_magnitude_nifti(t2_nlls_oriented, out_path, res)
         print(f"[T2-3SE] saved {out_path}")
 
     return {
         "t2_nlls": t2_nlls_oriented,
-        "TEs": te_sorted,
+        "TEs": te_sorted_ms,
         "weighted_images": weighted_images,
         "phantom": phantom,
     }

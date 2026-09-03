@@ -219,7 +219,11 @@ def run_adc_triple(
                 (echo3_ks[d], nufft_echo3),
             ):
                 kspace_tensor = torch.from_numpy(np.array(kspace_line)).to(torch.complex64)
-                echo_images.append(nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy().T)
+                # No `.T`: an untransposed nufft_op.adj_op() output
+                # already lands on the same array grid as the phantom's
+                # own parameter maps (verified with a synthetic marker
+                # through this exact trajectory/operator pair).
+                echo_images.append(nufft_op.adj_op(kspace_tensor.flatten()).squeeze().cpu().numpy())
             per_direction_echo_images.append(np.stack(echo_images, axis=0))  # (3, Ny, Nx)
 
         all_echo_images.append(np.stack(per_direction_echo_images, axis=0))  # (n_dirs, 3, Ny, Nx)
@@ -248,7 +252,13 @@ def run_adc_triple(
         out_path = os.path.join(
             paths.volumes_dir, f"{paths.phantom_name}-ADC_MSE_{blip_tag}.nii.gz"
         )
-        save_magnitude_nifti(np.rot90(np.flipud(adc_nlls_oriented), 1), out_path, res)
+        # No rot90/flipud: with the `.T` above removed, adc_nlls_oriented
+        # already matches the phantom's D map grid directly (see the
+        # comment on the recon step above) — the rot90(flipud(...), 1)
+        # this used to apply did not correct for that stray `.T`; composed
+        # with it, it netted out to a plain 180° rotation of the
+        # already-misaligned map.
+        save_magnitude_nifti(adc_nlls_oriented, out_path, res)
         print(f"[ADC-3SE] saved {out_path}")
 
     result = {
